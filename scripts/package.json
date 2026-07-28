@@ -1,0 +1,29 @@
+{
+  "name": "claude-ui-monitor-scripts",
+  "private": true,
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "snapshots":        "playwright test --config playwright.config.js",
+    "snapshots:update": "playwright test --config playwright.config.js --update-snapshots",
+    "snapshots:report": "playwright show-report",
+    "lint":             "eslint *.js",
+    "typecheck":        "tsc --noEmit"
+  },
+  "dependencies": {
+    "@axe-core/playwright":   "^4.12.1",
+    "@browserbasehq/stagehand": "^3.7.1",
+    "@playwright/test":       "^1.62.0",
+    "dotenv":                 "^16.4.0",
+    "playwright":             "^1.62.0",
+    "zod":                    "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node":                       "^20.0.0",
+    "@typescript-eslint/eslint-plugin":  "^7.0.0",
+    "@typescript-eslint/parser":         "^7.0.0",
+    "eslint":                            "^8.57.0",
+    "typescript":                        "^5.5.0"
+  }
+}

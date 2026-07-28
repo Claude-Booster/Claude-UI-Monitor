@@ -1,0 +1,15 @@
+{
+  "version": "1.0",
+  "_comment": "routes: 'auto' = discover automatically using framework nav_strategy; ['/r1','/r2'] = explicit list; omit or null = root page only.",
+  "projects": [
+    {
+      "_example": true,
+      "name": "My App",
+      "path": "C:\\Users\\yourname\\my-app",
+      "framework": "React",
+      "port": 3000,
+      "start": "npm run dev",
+      "routes": null
+    }
+  ]
+}

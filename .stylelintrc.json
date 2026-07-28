@@ -1,0 +1,27 @@
+{
+  "extends": ["stylelint-config-standard"],
+  "rules": {
+    "color-no-invalid-hex":                    true,
+    "font-family-no-duplicate-names":          true,
+    "unit-no-unknown":                         true,
+    "property-no-unknown":                     true,
+    "declaration-block-no-duplicate-properties": [true, { "ignore": ["consecutive-duplicates-with-different-values"] }],
+    "selector-pseudo-class-no-unknown":        [true, { "ignorePseudoClasses": ["global", "local", "deep"] }],
+    "selector-pseudo-element-no-unknown":      [true, { "ignorePseudoElements": ["v-deep", "deep"] }],
+    "at-rule-no-unknown":                      [true, { "ignoreAtRules": ["tailwind", "apply", "layer", "config", "variants", "responsive", "screen"] }],
+    "no-duplicate-at-import-rules":            true,
+    "no-invalid-double-slash-comments":        true,
+    "alpha-value-notation":                    null,
+    "color-function-notation":                 null
+  },
+  "overrides": [
+    {
+      "files": ["**/*.scss", "**/*.sass"],
+      "extends": ["stylelint-config-standard-scss"],
+      "rules": {
+        "scss/at-rule-no-unknown": [true, { "ignoreAtRules": ["tailwind", "apply", "layer", "config"] }],
+        "at-rule-no-unknown": null
+      }
+    }
+  ]
+}

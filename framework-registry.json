@@ -1,0 +1,225 @@
+{
+  "version": "1",
+  "_comment": "Single source of truth for UI framework detection. Add new frameworks here — ui-check.ps1 and ui-monitor agent read this file at runtime. No other files need editing.",
+  "frameworks": [
+    {
+      "name": "Angular",
+      "ports": [4200],
+      "nav_strategy": "link-crawl",
+      "fingerprints": ["<app-root", "ng-version", "angular"],
+      "checks": [
+        "[object Object] rendered in template (missing pipe or async)",
+        "NG0 errors in console (e.g. NullInjectorError, ExpressionChangedAfterItHasBeenChecked)",
+        "router-outlet renders blank (missing route or lazy-load failure)",
+        "Unresolved async pipe (| async) showing null or undefined"
+      ]
+    },
+    {
+      "name": "SvelteKit",
+      "ports": [5173],
+      "nav_strategy": "link-crawl",
+      "fingerprints": ["__sveltekit", "svelte-announcer", "_app/immutable"],
+      "checks": [
+        "Svelte 5 rune errors ($state/$derived used outside component)",
+        "TipTap editor toolbar items missing or unresponsive",
+        "Drizzle ORM values rendering as undefined in UI",
+        "SvelteKit load() error causing blank page (check +error.svelte)"
+      ]
+    },
+    {
+      "name": "Vite / Vue / Lit",
+      "ports": [5173],
+      "nav_strategy": "link-crawl",
+      "fingerprints": ["/@vite/client", "__vite_is_modern_browser", "vite/modulepreload-polyfill"],
+      "checks": [
+        "HMR WebSocket disconnect (vite WS errors in console)",
+        "Missing module 404 (bare import not resolved)",
+        "Vue reactivity warning (non-reactive object mutated)"
+      ]
+    },
+    {
+      "name": "Next.js / React",
+      "ports": [3000, 3001],
+      "nav_strategy": "link-crawl",
+      "fingerprints": ["__NEXT_DATA__", "_next/static", "next/dist"],
+      "checks": [
+        "Hydration mismatch (server/client HTML differs)",
+        "React key warning in list renders",
+        "Missing NEXT_PUBLIC_ env variable (undefined in client bundle)",
+        "Image domain not configured in next.config.js (broken <Image>)"
+      ]
+    },
+    {
+      "name": "Astro",
+      "ports": [4321],
+      "nav_strategy": "link-crawl",
+      "fingerprints": ["astro-island", "@astrojs", "astro-dev-toolbar"],
+      "checks": [
+        "Island hydration error (client:load directive failing)",
+        "Missing props on hydrated component",
+        "404 on static asset from public/"
+      ]
+    },
+    {
+      "name": "Streamlit",
+      "ports": [8501, 5000],
+      "nav_strategy": "tab-click",
+      "fingerprints": ["streamlit", "_stcore", "stApp"],
+      "checks": [
+        "Python traceback shown in error pane",
+        "Empty DataFrame renders (no data loaded)",
+        "Broken WebSocket on /_stcore/stream (check network tab)",
+        "st.cache_data stale (outdated data shown after code change)"
+      ]
+    },
+    {
+      "name": "Flask / Jinja2",
+      "ports": [5000, 5001],
+      "nav_strategy": "link-crawl",
+      "fingerprints": ["flask", "jinja", "Werkzeug"],
+      "checks": [
+        "Unrendered {{ variable }} literals visible on page",
+        "500 Internal Server Error page (Werkzeug debugger)",
+        "Blank chart canvas (JS chart library failed to init)",
+        "Missing static asset (url_for() path wrong)"
+      ]
+    },
+    {
+      "name": "Django",
+      "ports": [8000],
+      "nav_strategy": "link-crawl",
+      "fingerprints": ["csrfmiddlewaretoken", "djdt", "__django"],
+      "checks": [
+        "CSRF token missing on POST forms",
+        "Django 500 / 404 debug page",
+        "Template tag rendering as literal text",
+        "Static files 404 (STATICFILES_DIRS misconfigured)"
+      ]
+    },
+    {
+      "name": "FastAPI",
+      "ports": [8000],
+      "nav_strategy": "link-crawl",
+      "fingerprints": ["rapidoc", "swagger-ui", "redoc", "openapi.json"],
+      "checks": [
+        "OpenAPI docs page blank (schema generation error)",
+        "CORS error on API calls from frontend",
+        "422 Unprocessable Entity on valid requests (schema mismatch)"
+      ]
+    },
+    {
+      "name": "Dash",
+      "ports": [8050, 8000],
+      "nav_strategy": "link-crawl",
+      "fingerprints": ["_dash-app-content", "dash-renderer", "_dash-component-suites"],
+      "checks": [
+        "Blank Graph component (Plotly failed to render — check console)",
+        "dash.exceptions callback error in browser console",
+        "/_dash-layout or /_dash-dependencies fetch failed (network tab)",
+        "Missing dcc / dbc component styles (CDN blocked)"
+      ]
+    },
+    {
+      "name": "Gradio",
+      "ports": [7860],
+      "nav_strategy": "tab-click",
+      "fingerprints": ["gradio-app", "<gradio-app", "gradio/static"],
+      "checks": [
+        "Component not rendering (Gradio version mismatch)",
+        "Model output missing (inference error — check server logs)",
+        "WebSocket disconnect on /queue/join",
+        "File upload failing (tmp dir permissions)"
+      ]
+    },
+    {
+      "name": "Reflex",
+      "ports": [3000, 8000, 5173],
+      "nav_strategy": "link-crawl",
+      "fingerprints": ["_rx", "reflex", "/__event"],
+      "checks": [
+        "Blank page with spinner stuck (state hydration failed on /__event WebSocket)",
+        "rx. component not found error in console",
+        "Missing reflex.js bundle (404 in network tab)",
+        "State update not reflected in UI (WebSocket disconnect)"
+      ]
+    },
+    {
+      "name": "Panel",
+      "ports": [5006, 5007],
+      "nav_strategy": "tab-click",
+      "fingerprints": ["pn-", "bk-root", "bokeh", "panel"],
+      "checks": [
+        "Bokeh widget not rendering (BokehJS load failed)",
+        "WebSocket disconnect on /ws endpoint",
+        "Missing pn- prefixed component (Panel version mismatch)",
+        "Layout overflow (HoloViews plot overflowing container)"
+      ]
+    },
+    {
+      "name": "Solara",
+      "ports": [8765],
+      "nav_strategy": "tab-click",
+      "fingerprints": ["solara", "ipyvuetify", "ipywidgets"],
+      "checks": [
+        "Widget not rendering (ipyvuetify component missing)",
+        "Kernel connection failed (check Jupyter kernel status)",
+        "Missing ipywidgets output (display() not called)",
+        "Reactivity not triggering (use_state hook misuse)"
+      ]
+    },
+    {
+      "name": "Marimo",
+      "ports": [2718],
+      "nav_strategy": "tab-click",
+      "fingerprints": ["marimo", "marimo-island", "mo-"],
+      "checks": [
+        "Cell execution error shown inline",
+        "DAG cycle detected (circular cell dependencies)",
+        "Missing output render (cell not marked as output)",
+        "Reactive variable not propagating to dependent cells"
+      ]
+    },
+    {
+      "name": "Storybook",
+      "ports": [6006, 4000],
+      "nav_strategy": "link-crawl",
+      "fingerprints": ["__STORYBOOK_ADDONS_CHANNEL__", "storybook", "@storybook"],
+      "checks": [
+        "Story not rendering (component import error)",
+        "Missing controls panel (args not defined in story)",
+        "Broken addon panel (addon not registered in .storybook/main.js)",
+        "Canvas blank (decorator throwing error)"
+      ]
+    },
+    {
+      "name": "Generic HTTP",
+      "ports": [8080, 8090],
+      "nav_strategy": "none",
+      "fingerprints": [],
+      "checks": [
+        "404s for linked CSS/JS/image assets",
+        "Any JS error in console",
+        "Broken layout (missing stylesheet)",
+        "Mixed content warnings (HTTP assets on HTTPS page)"
+      ]
+    }
+  ]
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

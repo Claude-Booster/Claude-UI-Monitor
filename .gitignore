@@ -1,0 +1,9 @@
+scripts/node_modules/
+scripts/test-results/
+scripts/playwright-report/
+scripts/baselines/
+*.png
+*.jpg
+ui-audit-log.jsonl
+.env
+design-tokens.json

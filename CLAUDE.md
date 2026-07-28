@@ -1,0 +1,133 @@
+# Global Claude Code Instructions
+
+## Autonomous UI Monitor
+
+A PostToolUse hook (`~/.claude/scripts/ui-check.ps1`) fires after every `Edit` or `Write`
+on a frontend file while a dev server is running. When you see a **UI-MONITOR TRIGGER**
+in your context, execute ALL steps below immediately and autonomously — no confirmation needed.
+
+### 12-Step Protocol
+
+**Step 1 — Chrome debug port** (avoids collision when multiple checks run simultaneously)
+```
+$debugPort = <app_port> + 10000   # e.g. 8501 → 18501,  5001 → 15001
+Start-Process chrome "--remote-debugging-port=$debugPort --headless=new <url>"
+Start-Sleep 3
+```
+
+**Step 2 — Lighthouse BEFORE** (chrome-devtools-mcp `lighthouse_audit`)
+Record baseline `performance / accessibility / best_practices / seo` scores before any fix.
+
+**Step 3 — Screenshots via PowerShell** (always works — no MCP session dependency)
+```
+node $env:USERPROFILE\.claude\scripts\pw-e2e-test.js <url> <path>-desktop.png 1280 800
+node $env:USERPROFILE\.claude\scripts\pw-e2e-test.js <url> <path>-mobile.png  390  844
+node $env:USERPROFILE\.claude\scripts\pw-e2e-test.js <url> <path>-tablet.png  768  1024
+```
+Save to `~/.claude/ui-screenshots/`. Then **Read each .png** with the Read tool to see them.
+MCP `browser_take_screenshot` is a useful secondary confirmation if available.
+
+**Step 4 — Console errors** (chrome-devtools-mcp `list_console_messages`) → flag JS errors/warnings
+
+**Step 5 — Network failures** (chrome-devtools-mcp `list_network_requests`) → flag 4xx/5xx
+
+**Step 6 — Accessibility** (playwright MCP `browser_snapshot` + `a11y.violations` in the pw-e2e-test.js JSON output)
+
+**Step 7 — Visual inspection** — read all 3 screenshots and check:
+- Desktop (1280×800): layout breaks, overflow, missing content, wrong colors, misaligned elements
+- Mobile (390×844): collapsed nav broken, horizontal scroll, touch targets <44px, text too small
+- Tablet (768×1024): mid-size layout adaptation, panels stacking wrong
+- All viewports: broken fonts, low contrast, broken images, empty states
+
+**Step 8 — Fix** any issues by editing source files
+
+**Step 9 — Lighthouse AFTER** (chrome-devtools-mcp `lighthouse_audit`)
+Compare to BEFORE scores. If any score dropped by >2 points → revert the fix and retry.
+
+**Step 10 — Re-screenshot** desktop to confirm fix visually
+
+**Step 11 — Audit log** — append one JSON line to `~/.claude/ui-audit-log.jsonl`:
+```json
+{"ts":"<ISO>","project":"<name>","port":<n>,"url":"<url>","trigger":"edit","file_edited":"<path>",
+ "screenshots":{"desktop":"...","mobile":"...","tablet":"..."},
+ "lighthouse_before":{"performance":<n>,"accessibility":<n>,"best_practices":<n>,"seo":<n>},
+ "lighthouse_after":{"performance":<n>,"accessibility":<n>,"best_practices":<n>,"seo":<n>},
+ "issues":["..."],"fixes":["..."],"duration_s":<n>}
+```
+
+**Step 12 — Summary**: 2 sentences — what was found and fixed (or "no issues found").
+
+The `ui-monitor` agent in `~/.claude/agents/ui-monitor.md` has full instructions including
+dynamic port discovery, framework detection, and framework-specific checks.
+
+## Known UI Projects
+
+Edit `~/.claude/project-registry.json` to register your projects. The hook discovers live
+servers automatically via port scanning — this table is for quick reference only.
+
+| Project directory | Framework | Dev port | Start command |
+|---|---|---|---|
+| *(add your projects to project-registry.json)* | | | |
+
+Ports and framework fingerprints: `~/.claude/framework-registry.json`
+Per-project metadata (path, start command): `~/.claude/project-registry.json`
+
+## MCP Tools for UI Work
+
+- **playwright** MCP: `browser_navigate`, `browser_take_screenshot`, `browser_snapshot`, `browser_click`, `browser_type`
+- **chrome-devtools-mcp** MCP: `list_console_messages`, `list_network_requests`, `lighthouse_audit`, `take_screenshot`
+- **figma** MCP: `get_screenshot` (frame → PNG), `get_metadata` (layer tree), `get_design_context` (React/Tailwind spec)
+
+These tools load at new-chat start. When they are available, use them. When they are not
+(mid-session, headless run), fall back to the PowerShell node scripts — those always work.
+
+### Figma design-vs-live comparison (when Figma MCP is available)
+
+When `figma` MCP tools are loaded AND a Figma frame URL or node ID is known, add this step
+between Step 7 (visual inspection) and Step 8 (fix):
+
+```
+figma_get_screenshot  →  save as <ssBase>-figma-design.png
+Read <ssBase>-figma-design.png   (Figma design)
+Read <ssBase>-desktop.png        (live app)
+Compare: flag spacing, color, typography, or layout deviations between the two images.
+```
+
+If `get_variable_defs` is available (requires Figma Desktop MCP), also:
+```
+node ~/.claude/scripts/figma-token-check.js <url> --tokens=~/.claude/design-tokens.json
+```
+Report any CSS custom property mismatches as additional issues.
+
+## Additional UI Tools (CLI — call via PowerShell tool)
+
+- **Stylelint** (global): `stylelint --fix --config ~/.claude/.stylelintrc.json <file>` — auto-fixes CSS/SCSS. Runs automatically in hook on every CSS/SCSS edit.
+- **pw-e2e-test.js**: `node ~/.claude/scripts/pw-e2e-test.js <url> <out.png> [width] [height]` — screenshot + axe-core audit, always available regardless of MCP state.
+- **pw-e2e-test.js (multi-page)**: `node ~/.claude/scripts/pw-e2e-test.js <url> <prefix> 1280 800 --routes=auto --nav=link-crawl` — screenshots every route/tab; outputs JSON array.
+- **Figma baseline export**: `node ~/.claude/scripts/figma-baseline.js --file=<key> --nodes=<id1,id2>` — fetch Figma frames as PNG baselines (requires `FIGMA_ACCESS_TOKEN` in `~/.claude/.env`). Use `--list` to see all frames.
+- **Design token check**: `node ~/.claude/scripts/figma-token-check.js <url> --tokens=~/.claude/design-tokens.json` — compare CSS custom properties in live app against a design token JSON file.
+- **Snapshot baselines**: `cd ~/.claude/scripts && npm run snapshots:update` / `npm run snapshots`
+- **Stagehand** (AI browser fallback): `node ~/.claude/scripts/stagehand-fallback.js <url> "<task>"` — uses first available LLM key from `~/.claude/.env`.
+- **Proactive sweep**: `pwsh -File ~/.claude/scripts/sweep-all.ps1` — audits all live projects, writes audit log. No Claude session needed.
+- **Audit log**: `pwsh -File ~/.claude/scripts/audit-log.ps1 -Summary` — view history across all projects.
+
+## Figma Setup (Starter plan compatible)
+
+1. **Get a Personal Access Token**: Figma → Settings → Security → Personal access tokens → create with `file_content:read` scope.
+2. **Add to `~/.claude/.env`**: uncomment and fill `FIGMA_ACCESS_TOKEN` and `FIGMA_FILE_KEY`.
+3. **Figma MCP** (optional, richer): Already registered in `~/.claude.json`. Add your token to the `env.FIGMA_ACCESS_TOKEN` field → restart Claude Code → `figma` MCP tools appear automatically. Tools available on Starter: `get_screenshot`, `get_metadata`, `get_design_context`.
+4. **Find frame node IDs**: `node ~/.claude/scripts/figma-baseline.js --file=<key> --list` prints all frames with their IDs.
+5. **Design tokens** (Starter compatible): Install the free **Tokens Studio** Figma plugin → export tokens → save as `~/.claude/design-tokens.json` (flat `{ "--css-var": "value" }` or W3C DTCG format). Then `figma-token-check.js` reads it. The Variables REST API (Enterprise only) is NOT used.
+
+> Note: `get_variable_defs` MCP tool requires Figma Desktop app — skip it on Starter/remote setups.
+
+## Adding a New Project
+
+1. Add an entry to `~/.claude/project-registry.json` (name, path, framework, port, start command).
+2. If the framework is new, add it to `~/.claude/framework-registry.json`.
+3. Add the project to the table above.
+4. Optionally add a `CLAUDE.md` in the project directory with project-specific UI notes.
+
+## When There Is No Dev Server Running
+
+Continue with the code fix and note in one line that no live server was found to verify against.
