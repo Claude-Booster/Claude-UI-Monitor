@@ -1,50 +1,136 @@
-# Claude UI Monitor
+<div align="center">
 
-Autonomous UI health monitoring for Claude Code. Every time you edit a frontend file while a dev server is running, Claude automatically takes desktop/mobile/tablet screenshots, runs Lighthouse, checks accessibility, and fixes what it finds — all without you asking.
+<img src="https://readme-typing-svg.demolab.com?font=Fira+Code&size=28&duration=3000&pause=1000&color=7C3AED&center=true&vCenter=true&width=700&lines=Claude+UI+Monitor;Autonomous+UI+Health+for+Claude+Code;Screenshot+%E2%80%A2+Audit+%E2%80%A2+Fix+%E2%80%A2+Repeat" alt="Claude UI Monitor" />
 
-## What it does
+<br/>
 
-1. **Hook fires on save** — PostToolUse hook in Claude Code detects edits to frontend files
-2. **Discovers the live server** — scans open TCP ports, identifies the framework automatically
-3. **Screenshots 3 viewports** — desktop (1280×800), mobile (390×844), tablet (768×1024)
-4. **Lighthouse audit** — performance, accessibility, best practices, SEO (before and after any fix)
-5. **Accessibility** — axe-core violations on every screenshot run
-6. **Console + network errors** — flags JS errors, 4xx/5xx via chrome-devtools MCP
-7. **Fixes and re-screenshots** — edits source files, confirms visually
-8. **Audit log** — every run appended to `~/.claude/ui-audit-log.jsonl`
-9. **Figma comparison** (optional) — diff live UI against Figma designs at the pixel level
+[![Platform](https://img.shields.io/badge/platform-Windows-0078D4?logo=windows&logoColor=white)](https://github.com/claude-ui-monitor/claude-ui-monitor)
+[![Node](https://img.shields.io/badge/node-%3E%3D18-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org)
+[![Claude Code](https://img.shields.io/badge/Claude%20Code-required-7C3AED?logo=anthropic&logoColor=white)](https://claude.ai/code)
+[![License](https://img.shields.io/badge/license-MIT-22C55E)](LICENSE)
+[![Frameworks](https://img.shields.io/badge/frameworks-17%2B-F59E0B)](framework-registry.json)
 
-Works on **17 frameworks** out of the box: Angular, React, Vue, Svelte/SvelteKit, Next.js, Nuxt, Remix, Astro, Vite, Flask, Streamlit, FastAPI, Gradio, Panel, Solara, and more. Unknown frameworks are identified and auto-registered.
+<br/>
+
+*Every time you edit a frontend file, Claude automatically screenshots 3 viewports,
+runs Lighthouse, checks accessibility, and fixes what it finds — no prompting needed.*
+
+</div>
+
+---
+
+## How it works
+
+```mermaid
+flowchart LR
+    A([Edit frontend file]) --> B[ui-check.ps1\nPostToolUse hook]
+    B --> C{Dev server\nrunning?}
+    C -- No --> D([Silent exit])
+    C -- Yes --> E[Detect framework\n17+ supported]
+    E --> F[Emit trigger\nto Claude]
+    F --> G[Lighthouse\nBEFORE]
+    G --> H[Screenshots\nDesktop · Mobile · Tablet]
+    H --> I[Console errors\nNetwork failures\nA11y violations]
+    I --> J{Issues\nfound?}
+    J -- Yes --> K[Fix source files]
+    K --> L[Lighthouse\nAFTER]
+    J -- No --> L
+    L --> M[Re-screenshot\nconfirm fix]
+    M --> N[Append to\nui-audit-log.jsonl]
+    N --> O([2-sentence summary])
+
+    style A fill:#7C3AED,color:#fff
+    style O fill:#22C55E,color:#fff
+    style D fill:#6B7280,color:#fff
+    style K fill:#F59E0B,color:#000
+```
+
+---
+
+## What gets checked on every save
+
+<table>
+<tr>
+<td width="50%">
+
+**Visual**
+- Desktop (1280×800)
+- Mobile (390×844)
+- Tablet (768×1024)
+- Layout breaks, overflow, low contrast
+- Missing images, broken fonts
+
+</td>
+<td width="50%">
+
+**Quality**
+- Lighthouse: performance, accessibility, best practices, SEO
+- axe-core accessibility violations
+- Console JS errors & warnings
+- Network 4xx / 5xx failures
+
+</td>
+</tr>
+<tr>
+<td>
+
+**Figma** *(optional)*
+- Design-vs-live pixel diff
+- CSS design token drift detection
+- Baseline export from any frame
+
+</td>
+<td>
+
+**Auto-fix**
+- Issues are fixed in source files
+- Lighthouse re-run confirms no regression
+- Everything logged to audit history
+
+</td>
+</tr>
+</table>
+
+---
 
 ## Prerequisites
 
-- Windows 10/11 with PowerShell 7+ (`winget install Microsoft.PowerShell`)
-- [Claude Code](https://claude.ai/code) (CLI or desktop app)
-- Node.js 18+ (`winget install OpenJS.NodeJS`)
-- At least one free LLM API key for the AI browser fallback:
-  - [Groq](https://console.groq.com) (recommended — fast and free)
-  - OR [OpenAI](https://platform.openai.com) or [Anthropic](https://console.anthropic.com)
+| Requirement | Install |
+|---|---|
+| Windows 10/11 | — |
+| PowerShell 7+ | `winget install Microsoft.PowerShell` |
+| [Claude Code](https://claude.ai/code) | CLI or desktop app |
+| Node.js 18+ | `winget install OpenJS.NodeJS` |
+| LLM API key (one of) | [Groq](https://console.groq.com) (free) · [OpenAI](https://platform.openai.com) · [Anthropic](https://console.anthropic.com) |
+
+---
 
 ## Install
 
 ```powershell
-git clone https://github.com/YOUR_USERNAME/claude-ui-monitor.git
+git clone https://github.com/claude-ui-monitor/claude-ui-monitor.git
 cd claude-ui-monitor
 pwsh -File install.ps1
 ```
 
-The installer is idempotent — safe to re-run after updates.
+> Safe to re-run after `git pull` — all steps are idempotent. Your `.env` and `project-registry.json` are never overwritten.
 
-After installing:
-1. Edit `~/.claude/project-registry.json` — add your projects
-2. Open a **new** Claude Code chat — MCP servers load at conversation start
-3. Start your dev server, edit a frontend file — the hook fires automatically
+### What the installer does
 
-## Adding a project
+- Copies scripts and agents to `~/.claude/`
+- **Merges** the PostToolUse hook into your existing `~/.claude/settings.json`
+- **Merges** MCP servers (playwright, chrome-devtools-mcp, figma) into your existing `~/.claude.json`
+- Appends UI Monitor instructions to `~/.claude/CLAUDE.md`
+- Runs `npm install` and installs Playwright Chromium
+- Installs stylelint globally
+
+---
+
+## Add your first project
 
 Edit `~/.claude/project-registry.json`:
 
-```json
+```jsonc
 {
   "projects": [
     {
@@ -53,116 +139,121 @@ Edit `~/.claude/project-registry.json`:
       "framework": "React",
       "port": 3000,
       "start": "npm run dev",
-      "routes": null
+      "routes": null         // null = homepage only (default)
+                             // "auto" = discover all routes
+                             // ["/", "/about"] = specific pages
     }
   ]
 }
 ```
 
-`routes` options:
-- `null` — check homepage only (default)
-- `"auto"` — discover and check all routes/tabs automatically
-- `["/", "/about", "/dashboard"]` — check specific pages
+That's it. Start your dev server, edit a UI file, and the monitor activates automatically.
 
-## Configuration
+---
 
-| File | Purpose |
+## Supported frameworks
+
+<div align="center">
+
+| Frontend | Backend / Dashboards |
 |---|---|
-| `~/.claude/project-registry.json` | Your projects (paths, ports, start commands) |
-| `~/.claude/framework-registry.json` | Framework fingerprints and nav strategies (tool-managed) |
-| `~/.claude/.env` | API keys (LLM for Stagehand, Figma token) |
-| `~/.claude/ui-audit-log.jsonl` | Audit history (one JSON line per run) |
+| Angular · React · Vue · Svelte/SvelteKit | Flask · FastAPI · Django |
+| Next.js · Nuxt · Remix · Astro | Streamlit · Gradio · Panel |
+| Vite (generic) · Static HTML | Solara · Marimo |
+
+Unknown frameworks are **auto-detected and registered** from process name, command line, and HTTP fingerprint.
+
+</div>
+
+---
 
 ## Commands
 
 ```powershell
-# View audit history
+# View audit history across all projects
 pwsh -File ~/.claude/scripts/audit-log.ps1 -Summary
 
 # Manual sweep of all live projects
 pwsh -File ~/.claude/scripts/sweep-all.ps1
 
-# Manual sweep with auto-fix
+# Manual sweep + auto-fix any issues
 pwsh -File ~/.claude/scripts/sweep-all.ps1 -Fix
 
-# Screenshot a URL manually
+# Schedule automatic nightly sweeps (Windows Task Scheduler)
+pwsh -File ~/.claude/scripts/schedule-sweep.ps1
+
+# Screenshot a URL manually (outputs JSON + PNG)
 node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800
 
-# Multi-page screenshot
+# Multi-page: screenshot every route/tab
 node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out 1280 800 --routes=auto --nav=link-crawl
-
-# Schedule automatic nightly sweeps
-pwsh -File ~/.claude/scripts/schedule-sweep.ps1
 ```
 
-## Figma integration (optional, Starter plan compatible)
+---
 
-1. Figma → Settings → Security → Personal access tokens → create with `file_content:read` scope
-2. Add `FIGMA_ACCESS_TOKEN=your_token` to `~/.claude/.env`
-3. Add the same token to `mcpServers.figma.env.FIGMA_ACCESS_TOKEN` in `~/.claude.json`
-4. Restart Claude Code — `figma_get_screenshot` appears in the tool list
-5. Install free **Tokens Studio** plugin in Figma → export tokens → save to `~/.claude/design-tokens.json`
+## Figma integration *(Starter plan compatible)*
 
 ```powershell
-# List all frames in a Figma file
+# 1. Get token: Figma → Settings → Security → Personal access tokens (scope: file_content:read)
+# 2. Add to ~/.claude/.env:
+#    FIGMA_ACCESS_TOKEN=your_token_here
+#    FIGMA_FILE_KEY=the_id_from_your_figma_url
+
+# List all frames in your Figma file
 node ~/.claude/scripts/figma-baseline.js --file=YOUR_FILE_KEY --list
 
-# Export specific frames as PNG baselines
+# Export frames as PNG baselines
 node ~/.claude/scripts/figma-baseline.js --file=YOUR_FILE_KEY --nodes=ID1,ID2
 
-# Compare live app CSS against design tokens
+# Compare live app CSS against design tokens (export from Tokens Studio plugin)
 node ~/.claude/scripts/figma-token-check.js http://localhost:3000 --tokens=~/.claude/design-tokens.json
 ```
 
-## How it works
+When the Figma MCP server is active, Claude automatically diffs live screenshots against Figma designs as part of the 12-step protocol.
 
-```
-Edit frontend file
-      │
-      ▼
-ui-check.ps1 (PostToolUse hook, <10s)
-      │  Scans open TCP ports
-      │  Identifies framework via fingerprints
-      │  Emits JSON trigger → Claude's context
-      ▼
-Claude executes 12-step protocol
-      │  Lighthouse before
-      │  Screenshots: desktop / mobile / tablet
-      │  Console errors, network failures
-      │  Accessibility (axe-core)
-      │  [Figma diff if token set]
-      │  Fix issues in source files
-      │  Lighthouse after
-      │  Re-screenshot
-      │  Write audit log entry
-      ▼
-      Done (2-sentence summary)
-```
+---
 
-MCP servers (playwright, chrome-devtools-mcp, figma) provide browser control. The Node.js scripts (`pw-e2e-test.js`) are the fallback when MCP tools aren't available mid-session.
+## MCP servers installed
 
-## Codex / other agents
+| Server | Tools | Fallback |
+|---|---|---|
+| `@playwright/mcp` | `browser_navigate`, `browser_take_screenshot`, `browser_snapshot` | `pw-e2e-test.js` (always available) |
+| `chrome-devtools-mcp` | `lighthouse_audit`, `list_console_messages`, `list_network_requests` | Skipped gracefully |
+| `@figma/mcp` | `get_screenshot`, `get_metadata`, `get_design_context` | `figma-baseline.js` |
 
-The Node.js scripts work on any platform and can be called manually or from CI:
+MCP tools load at conversation start. If not available mid-session, the Node.js scripts take over automatically.
 
-```bash
-node scripts/pw-e2e-test.js http://localhost:3000 out.png
-node scripts/figma-baseline.js --file=KEY --list
-node scripts/figma-token-check.js http://localhost:3000
-```
-
-The automatic hook and CLAUDE.md protocol are Claude Code-specific.
+---
 
 ## Updating
 
 ```powershell
 cd claude-ui-monitor
 git pull
-pwsh -File install.ps1   # re-run installer — safe, idempotent
+pwsh -File install.ps1
 ```
 
-`framework-registry.json` is always updated on install. Your `project-registry.json` and `.env` are never overwritten.
+`framework-registry.json` and all scripts are always updated. Your `project-registry.json`, `.env`, and `CLAUDE.md` content are preserved.
 
-## License
+---
 
-MIT
+## Use with Codex or other agents
+
+The Node.js scripts are platform-agnostic and can be called from any CI pipeline or agent:
+
+```bash
+node scripts/pw-e2e-test.js http://localhost:3000 out.png          # screenshot + a11y
+node scripts/figma-baseline.js --file=KEY --list                    # list Figma frames
+node scripts/figma-token-check.js http://localhost:3000             # token drift check
+node scripts/stagehand-fallback.js http://localhost:3000 "task"    # AI browser
+```
+
+The automatic PostToolUse hook and `CLAUDE.md` protocol are Claude Code-specific.
+
+---
+
+<div align="center">
+
+MIT License · Built for [Claude Code](https://claude.ai/code)
+
+</div>
