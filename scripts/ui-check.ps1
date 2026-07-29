@@ -286,8 +286,8 @@ $(if ($autoFix) {
 @"
   7. REPORT ISSUES — auto-fix is OFF for this project (do NOT edit any source files):
        • List each issue: location (file/selector if known), description, severity
-       • 5 or fewer issues  → show the numbered list directly in your response
-       • More than 5 issues → show a short summary ("Found N issues across X areas"),
+       • 15 or fewer issues → show the numbered list directly in your response
+       • More than 15 issues → show a short summary ("Found N issues across X areas"),
          then tell the user: "Full details were written to the audit log. To view them, run:
            pwsh -File `"$env:USERPROFILE\.claude\scripts\audit-log.ps1`" -Summary"
        • Close with: "Would you like me to fix any of these?"

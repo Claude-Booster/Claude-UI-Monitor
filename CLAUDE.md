@@ -153,7 +153,7 @@ By default Claude fixes UI issues automatically. To change this:
 { "name": "My App", "port": 3000, "autofix": false, ... }
 ```
 
-When auto-fix is **off**, Claude lists issues and asks "Would you like me to fix any of these?" instead of editing files. If there are more than 5 issues it writes the full list to the audit log and gives you the command to view it.
+When auto-fix is **off**, Claude lists issues and asks "Would you like me to fix any of these?" instead of editing files. If there are more than 15 issues it writes the full list to the audit log and gives you the command to view it.
 
 ## When There Is No Dev Server Running
 
