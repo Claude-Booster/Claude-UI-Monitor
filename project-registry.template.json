@@ -1,6 +1,8 @@
 {
   "version": "1.0",
   "_comment": "routes: 'auto' = discover automatically using framework nav_strategy; ['/r1','/r2'] = explicit list; omit or null = root page only.",
+  "_autofixComment": "autofixDefault: global on/off switch (true = Claude fixes issues automatically, false = Claude reports and asks). Per-project 'autofix' overrides this. null = inherit global default.",
+  "autofixDefault": true,
   "projects": [
     {
       "_example": true,
@@ -9,7 +11,8 @@
       "framework": "React",
       "port": 3000,
       "start": "npm run dev",
-      "routes": null
+      "routes": null,
+      "autofix": null
     }
   ]
 }

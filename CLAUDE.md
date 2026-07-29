@@ -139,6 +139,22 @@ Report any CSS custom property mismatches as additional issues.
 3. Add the project to the table above.
 4. Optionally add a `CLAUDE.md` in the project directory with project-specific UI notes.
 
+## Auto-fix control
+
+By default Claude fixes UI issues automatically. To change this:
+
+**Turn off globally** (all projects report-only):
+```json
+{ "autofixDefault": false, "projects": [...] }
+```
+
+**Turn off for one project** (overrides global default):
+```json
+{ "name": "My App", "port": 3000, "autofix": false, ... }
+```
+
+When auto-fix is **off**, Claude lists issues and asks "Would you like me to fix any of these?" instead of editing files. If there are more than 5 issues it writes the full list to the audit log and gives you the command to view it.
+
 ## When There Is No Dev Server Running
 
 Continue with the code fix and note in one line that no live server was found to verify against.

@@ -172,9 +172,10 @@ if (-not $found) {
 
 if (-not $found) { exit 0 }
 
-# ── Resolve nav strategy and routes for the detected framework ────────────────
+# ── Resolve nav strategy, routes, and autofix for the detected framework ──────
 $navStrategy  = 'link-crawl'   # default
 $projRoutes   = $null
+$autoFix      = $true          # default: auto-fix on
 $projRegPath  = "$env:USERPROFILE\.claude\project-registry.json"
 if (-not $unknownFramework) {
     # nav_strategy from framework-registry
@@ -182,13 +183,21 @@ if (-not $unknownFramework) {
         $fwEntry = $reg.frameworks | Where-Object { $_.name -eq $found.Label } | Select-Object -First 1
         if ($fwEntry -and $fwEntry.nav_strategy) { $navStrategy = $fwEntry.nav_strategy }
     }
-    # routes from project-registry (matched by port)
+    # routes and autofix from project-registry (matched by port)
     if (Test-Path $projRegPath) {
         $pReg = try { Get-Content $projRegPath -Raw | ConvertFrom-Json -ErrorAction Stop } catch { $null }
         if ($pReg) {
+            # Global default
+            if ($null -ne $pReg.autofixDefault) { $autoFix = [bool]$pReg.autofixDefault }
             $projEntry = $pReg.projects | Where-Object { [int]$_.port -eq [int]$found.Port } | Select-Object -First 1
-            if ($projEntry -and $projEntry.routes -and $projEntry.routes -ne 'null') {
-                $projRoutes = if ($projEntry.routes -is [array]) { $projEntry.routes -join ',' } else { $projEntry.routes }
+            if ($projEntry) {
+                # Per-project override (null = inherit global)
+                if ($null -ne $projEntry.autofix -and "$($projEntry.autofix)" -ne '') {
+                    $autoFix = [bool]$projEntry.autofix
+                }
+                if ($projEntry.routes -and $projEntry.routes -ne 'null') {
+                    $projRoutes = if ($projEntry.routes -is [array]) { $projEntry.routes -join ',' } else { $projEntry.routes }
+                }
             }
         }
     }
@@ -271,7 +280,19 @@ $(if ($projRoutes -and $navStrategy -ne 'none') { @"
                          render quality requires human review beyond what screenshots can verify
        Video           : if advanced.video path is present — note it for external viewing
 
-  7. FIX any issues found by editing source files.
+$(if ($autoFix) {
+"  7. FIX any issues found by editing source files."
+} else {
+@"
+  7. REPORT ISSUES — auto-fix is OFF for this project (do NOT edit any source files):
+       • List each issue: location (file/selector if known), description, severity
+       • 5 or fewer issues  → show the numbered list directly in your response
+       • More than 5 issues → show a short summary ("Found N issues across X areas"),
+         then tell the user: "Full details were written to the audit log. To view them, run:
+           pwsh -File `"$env:USERPROFILE\.claude\scripts\audit-log.ps1`" -Summary"
+       • Close with: "Would you like me to fix any of these?"
+"@
+})
 
   8. LIGHTHOUSE AFTER: re-run lighthouse_audit → compare scores to BEFORE.
        If any score dropped by >2 points → revert the fix and try again.
