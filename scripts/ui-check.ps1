@@ -240,7 +240,7 @@ Execute ALL steps NOW — no confirmation needed:
        Framework nav strategy : $navStrategy$(if ($projRoutes) { "  |  Routes: $projRoutes" } else { '' })
 
        Root page (all 3 viewports):
-         Desktop : node `$env:USERPROFILE\.claude\scripts\pw-e2e-test.js $url "${ssBase}-desktop.png" 1280 800
+         Desktop : node `$env:USERPROFILE\.claude\scripts\pw-e2e-test.js $url "${ssBase}-desktop.png" 1280 800 --detect-advanced
          Mobile  : node `$env:USERPROFILE\.claude\scripts\pw-e2e-test.js $url "${ssBase}-mobile.png"  390  844
          Tablet  : node `$env:USERPROFILE\.claude\scripts\pw-e2e-test.js $url "${ssBase}-tablet.png"  768  1024
 $(if ($projRoutes -and $navStrategy -ne 'none') { @"
@@ -261,6 +261,15 @@ $(if ($projRoutes -and $navStrategy -ne 'none') { @"
        Mobile    (390×844) : collapsed nav, horizontal scroll, touch targets <44px, text too small
        Tablet  (768×1024)  : mid-size layout adaptation, panels stacking wrong
        All viewports       : broken fonts, low contrast, broken images, empty states
+
+  6a. ADVANCED UI CHECK — only if the desktop JSON output contains an "advanced" field:
+       FPS             : if advanced.fps < 55 → flag as animation jank (smooth=55+, reduced=30-54, janky=<30)
+       Animation frames: Read each file in advanced.frames[] — check animation progresses, no frozen states
+       Hover states    : Read each file in advanced.hover[] — check hover effects render, no broken transitions
+       Scroll states   : Read each file in advanced.scroll[] — check scroll-triggered animations fire
+       WebGL/Canvas    : if advanced.detected.hasWebGL or hasCanvas → prioritise console errors; note
+                         render quality requires human review beyond what screenshots can verify
+       Video           : if advanced.video path is present — note it for external viewing
 
   7. FIX any issues found by editing source files.
 

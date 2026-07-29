@@ -20,12 +20,15 @@ Record baseline `performance / accessibility / best_practices / seo` scores befo
 
 **Step 3 — Screenshots via PowerShell** (always works — no MCP session dependency)
 ```
-node $env:USERPROFILE\.claude\scripts\pw-e2e-test.js <url> <path>-desktop.png 1280 800
+node $env:USERPROFILE\.claude\scripts\pw-e2e-test.js <url> <path>-desktop.png 1280 800 --detect-advanced
 node $env:USERPROFILE\.claude\scripts\pw-e2e-test.js <url> <path>-mobile.png  390  844
 node $env:USERPROFILE\.claude\scripts\pw-e2e-test.js <url> <path>-tablet.png  768  1024
 ```
 Save to `~/.claude/ui-screenshots/`. Then **Read each .png** with the Read tool to see them.
 MCP `browser_take_screenshot` is a useful secondary confirmation if available.
+
+`--detect-advanced` auto-detects CSS animations, WebGL, canvas, GSAP, Framer Motion, Lottie etc. and
+auto-enables multi-frame capture, hover states, and scroll capture when relevant features are found.
 
 **Step 4 — Console errors** (chrome-devtools-mcp `list_console_messages`) → flag JS errors/warnings
 
@@ -38,6 +41,14 @@ MCP `browser_take_screenshot` is a useful secondary confirmation if available.
 - Mobile (390×844): collapsed nav broken, horizontal scroll, touch targets <44px, text too small
 - Tablet (768×1024): mid-size layout adaptation, panels stacking wrong
 - All viewports: broken fonts, low contrast, broken images, empty states
+
+**Step 7a — Advanced UI check** (only when desktop JSON output contains an `advanced` field)
+- **FPS** (`advanced.fps`): < 55 = flag jank | 30–54 = reduced | < 30 = janky; investigate CSS animation performance
+- **Animation frames** (`advanced.frames[]`): Read each PNG — verify animation progresses correctly, no frozen/stuck states
+- **Hover states** (`advanced.hover[]`): Read each PNG — verify hover effects render, transitions not broken
+- **Scroll positions** (`advanced.scroll[]`): Read each PNG — verify scroll-triggered animations fire, no content missing
+- **WebGL / Canvas** (`advanced.detected.hasWebGL` or `hasCanvas`): Prioritise console errors; note render quality requires human review
+- **Video** (`advanced.video`): Note the .webm path for external viewing if animation issues need deeper investigation
 
 **Step 8 — Fix** any issues by editing source files
 
