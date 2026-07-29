@@ -1,0 +1,12 @@
+# blocked-patterns — one extended-regex pattern per line (grep -E syntax)
+# Blank lines and lines starting with # are ignored.
+#
+# Copy this file to .githooks/blocked-patterns and add your own patterns.
+# That file is gitignored and will never be pushed to GitHub.
+#
+# Examples:
+#   Jane Doe
+#   john\.doe
+#   mycompany\.com
+#   MyCompany
+#   my_handle

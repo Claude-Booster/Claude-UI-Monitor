@@ -176,9 +176,17 @@ OK "stylelint installed globally"
 # ── 14. Git pre-commit hook ────────────────────────────────────────────────────
 if (Test-Path (Join-Path $repoRoot '.git')) {
     git -C $repoRoot config core.hooksPath .githooks 2>&1 | Out-Null
-    # Ensure executable bit is set (required on Unix/macOS; harmless on Windows)
     git -C $repoRoot update-index --chmod=+x .githooks/pre-commit 2>&1 | Out-Null
     OK "Pre-commit hook activated (core.hooksPath = .githooks)"
+
+    $patternsFile = Join-Path $repoRoot '.githooks\blocked-patterns'
+    $exampleFile  = Join-Path $repoRoot '.githooks\blocked-patterns.example'
+    if (-not (Test-Path $patternsFile)) {
+        Copy-Item $exampleFile $patternsFile
+        Warn "Created .githooks/blocked-patterns from example — edit it to add your restricted patterns"
+    } else {
+        Skip ".githooks/blocked-patterns already exists"
+    }
 } else {
     Skip "Not a git repo — pre-commit hook not activated"
 }

@@ -1,3 +1,4 @@
+.githooks/blocked-patterns
 scripts/node_modules/
 scripts/test-results/
 scripts/playwright-report/
