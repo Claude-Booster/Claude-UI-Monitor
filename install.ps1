@@ -173,6 +173,16 @@ Step "Installing stylelint globally..."
 npm install -g stylelint stylelint-config-standard 2>&1 | Out-Null
 OK "stylelint installed globally"
 
+# ── 14. Git pre-commit hook ────────────────────────────────────────────────────
+if (Test-Path (Join-Path $repoRoot '.git')) {
+    git -C $repoRoot config core.hooksPath .githooks 2>&1 | Out-Null
+    # Ensure executable bit is set (required on Unix/macOS; harmless on Windows)
+    git -C $repoRoot update-index --chmod=+x .githooks/pre-commit 2>&1 | Out-Null
+    OK "Pre-commit hook activated (core.hooksPath = .githooks)"
+} else {
+    Skip "Not a git repo — pre-commit hook not activated"
+}
+
 # ── Done ──────────────────────────────────────────────────────────────────────
 Write-Host @"
 

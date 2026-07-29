@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Pre-commit: blocks commits containing restricted identifiers.
+# Activate once after cloning: git config core.hooksPath .githooks
+
+SELF=".githooks/pre-commit"
+
+# Decode patterns at runtime — values are intentionally opaque
+_d() { printf '%s' "$1" | base64 -d 2>/dev/null || printf '%s' "$1" | base64 -D 2>/dev/null; }
+P1=$(_d "RnJlZCBNYW5kYXB8RnJlZGVyaWNrIE1hbmRhcA==")
+P2=$(_d "ZnJlZGVyaWNrXC5tYW5kYXB8dGh1Z19rY2lyZWRlcmZ8YWNjZW50dXJlXC5jb218QWNjZW50dXJl")
+
+STAGED=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null)
+[ -z "$STAGED" ] && exit 0
+
+FOUND=0
+while IFS= read -r f; do
+  [ -z "$f" ]    && continue
+  [ "$f" = "$SELF" ] && continue   # never scan this hook file itself
+
+  CONTENT=$(git show ":$f" 2>/dev/null) || continue
+
+  if printf '%s' "$CONTENT" | grep -qIE "$P1"; then
+    printf 'BLOCKED  %s  (restricted identifier P1)\n' "$f" >&2
+    FOUND=1
+  fi
+  if printf '%s' "$CONTENT" | grep -qIE "$P2"; then
+    printf 'BLOCKED  %s  (restricted identifier P2)\n' "$f" >&2
+    FOUND=1
+  fi
+done <<< "$STAGED"
+
+if [ "$FOUND" -eq 1 ]; then
+  printf '\nCommit blocked. Remove restricted identifiers and try again.\n' >&2
+  exit 1
+fi
+
+exit 0

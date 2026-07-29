@@ -225,6 +225,14 @@ MCP tools load at conversation start. If not available mid-session, the Node.js 
 
 ---
 
+## Contributing
+
+A pre-commit hook in `.githooks/pre-commit` scans staged files for restricted identifiers before every commit. It is activated automatically by `install.ps1`. To activate manually:
+
+```bash
+git config core.hooksPath .githooks
+```
+
 ## Updating
 
 ```powershell
