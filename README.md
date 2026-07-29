@@ -187,7 +187,57 @@ node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800
 
 # Multi-page: screenshot every route/tab
 node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out 1280 800 --routes=auto --nav=link-crawl
+
+# Advanced UI: auto-detect animations, canvas, WebGL, GSAP, Framer Motion, Lottie
+# Returns JSON with an 'advanced' key containing fps, frames, hover, scroll, and video fields
+node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out 1280 800 --detect-advanced
+
+# Explicit advanced capture flags (combinable)
+node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out 1280 800 --animated   # multi-frame snapshots + FPS
+node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out 1280 800 --hover       # screenshot interactive element hover states
+node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out 1280 800 --scroll      # screenshot at 25/50/75/100% scroll depth
+node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out 1280 800 --video       # record a .webm of animated content
 ```
+
+---
+
+## Auto-fix control
+
+By default Claude fixes UI issues automatically. This can be overridden globally or per project in `~/.claude/project-registry.json`:
+
+```jsonc
+{
+  "autofixDefault": false,   // turn off for ALL projects
+  "projects": [
+    {
+      "name": "My App",
+      "port": 3000,
+      "autofix": true        // override global default for this project (true/false/null)
+    }
+  ]
+}
+```
+
+When auto-fix is **off**, Claude reports the issues and asks whether to fix them. If there are more than 15 issues, the full list is written to the audit log and you're given the `audit-log.ps1 -Summary` command to view it.
+
+---
+
+## API key handling
+
+Scripts fail loudly rather than silently. When a required key is missing or invalid, the script outputs structured JSON to stdout:
+
+```json
+{"ok": false, "error": "GROQ_API_KEY is not set", "action": "Add GROQ_API_KEY=... to ~/.claude/.env", "envFile": "~/.claude/.env"}
+```
+
+Claude reads the `action` field and surfaces it to you immediately. Keys go in `~/.claude/.env`:
+
+| Key | Provider | Free tier |
+|---|---|---|
+| `GROQ_API_KEY` | [console.groq.com](https://console.groq.com) | Yes |
+| `OPENAI_API_KEY` | [platform.openai.com](https://platform.openai.com) | No |
+| `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com) | No |
+| `FIGMA_ACCESS_TOKEN` | Figma → Settings → Security | Yes |
 
 ---
 

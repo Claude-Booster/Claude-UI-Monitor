@@ -315,9 +315,9 @@ async function singlePage() {
   let a11y = { violations: 0, critical: 0, details: [] };
   if (url !== 'about:blank') a11y = await runAxe(page);
 
-  // Advanced checks
+  // Advanced checks — always runs when flags are set (detected = {} on blank pages)
   let advanced;
-  if (anyAdvFlag && url !== 'about:blank') {
+  if (anyAdvFlag) {
     const detected = await detectFeatures(page);
     advanced = await runAdvanced(page, outBase, detected);
   }

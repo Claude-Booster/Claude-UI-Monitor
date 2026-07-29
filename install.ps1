@@ -75,6 +75,13 @@ if (-not (Test-Path $ssDir)) {
 } else {
     Skip "ui-screenshots/ already exists"
 }
+$ssDirBaselines = Join-Path $ssDir 'baselines'
+if (-not (Test-Path $ssDirBaselines)) {
+    New-Item -ItemType Directory -Path $ssDirBaselines | Out-Null
+    OK "ui-screenshots/baselines/ directory created"
+} else {
+    Skip "ui-screenshots/baselines/ already exists"
+}
 
 # ── 8. CLAUDE.md — append UI Monitor section if not already present ───────────
 $claudeMd     = Join-Path $claudeDir 'CLAUDE.md'
