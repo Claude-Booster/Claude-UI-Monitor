@@ -155,6 +155,23 @@ By default Claude fixes UI issues automatically. To change this:
 
 When auto-fix is **off**, Claude lists issues and asks "Would you like me to fix any of these?" instead of editing files. If there are more than 15 issues it writes the full list to the audit log and gives you the command to view it.
 
+## API key errors and failures
+
+When any script output contains `"ok": false`, **stop and surface the issue to the user immediately** — never silently skip or continue as if the call succeeded.
+
+Use the `action` field in the JSON for the exact fix. Common patterns:
+
+| `error` contains | What to tell the user |
+|---|---|
+| "not set", "No LLM key", "FIGMA_ACCESS_TOKEN" | "The `<KEY>` is missing. Add it to `~/.claude/.env`: `KEY=your_value`" — show the `envFile` path from the JSON |
+| "401", "invalid", "expired", "unauthorized" | "Your API key is set but invalid or expired. Regenerate it at [provider] and update `~/.claude/.env`" |
+| "403", "forbidden", "scope" | "Permission denied — your token is missing a required scope. Check the token settings at the provider." |
+| "429", "rate limit", "too many requests" | "Rate limited. Wait ~30 seconds and I'll retry." — then retry once automatically |
+| "ENOTFOUND", "ECONNREFUSED", "Network error", "fetch failed" | "Cannot reach the API. Check your internet connection." |
+| "404", "not found" (Figma) | "Figma file not found. Verify the `--file=<key>` matches your Figma URL." |
+
+After surfacing the error, ask: **"Would you like to add/fix the key now, or skip this step?"** — do not proceed without an answer.
+
 ## When There Is No Dev Server Running
 
 Continue with the code fix and note in one line that no live server was found to verify against.

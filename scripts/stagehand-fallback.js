@@ -20,13 +20,34 @@ const { z }         = require('zod');
 const path          = require('path');
 
 // Load .env from ~/.claude/.env — dotenv is now in package.json so require always resolves
-require('dotenv').config({ path: path.join(process.env.USERPROFILE, '.claude', '.env') });
+const envFile = path.join(process.env.USERPROFILE || process.env.HOME || '', '.claude', '.env');
+require('dotenv').config({ path: envFile });
 
 const [,, url, task = 'screenshot the page and check for visible errors'] = process.argv;
 
 if (!url) {
-  console.error('Usage: node stagehand-fallback.js <url> "<task>"');
+  process.stdout.write(JSON.stringify({ ok: false, error: 'URL argument required', action: 'Usage: node stagehand-fallback.js <url> "<task>"' }) + '\n');
   process.exit(1);
+}
+
+// Emit a structured error visible to both Claude and terminal users, then exit
+function apiError(error, action, extra = {}) {
+  process.stdout.write(JSON.stringify({ ok: false, error, action, envFile, ...extra }) + '\n');
+  process.exit(1);
+}
+
+// Classify an error message into a user-friendly category
+function classifyError(msg) {
+  const m = msg.toLowerCase();
+  if (m.includes('401') || m.includes('unauthorized') || m.includes('invalid api key') || m.includes('invalid_api_key') || m.includes('authentication'))
+    return { type: 'auth',    action: `Your API key is set but invalid or expired. Regenerate it and update ${envFile}` };
+  if (m.includes('429') || m.includes('rate limit') || m.includes('rate_limit') || m.includes('too many requests'))
+    return { type: 'ratelimit', action: 'Rate limited by the API provider. Wait ~30 seconds and retry.' };
+  if (m.includes('403') || m.includes('forbidden') || m.includes('permission'))
+    return { type: 'permission', action: 'Permission denied. Check that your API key has the required scopes.' };
+  if (m.includes('enotfound') || m.includes('econnrefused') || m.includes('network') || m.includes('fetch failed'))
+    return { type: 'network', action: 'Cannot reach the API. Check your internet connection.' };
+  return { type: 'unknown', action: 'Check the error above and verify your API key in ' + envFile };
 }
 
 function resolveProvider() {
@@ -58,8 +79,14 @@ function resolveProvider() {
   if (process.env.BROWSERBASE_API_KEY) {
     return null; // cloud mode — no local LLM needed
   }
-  throw new Error(
-    'No LLM key found. Set ANTHROPIC_API_KEY, GROQ_API_KEY, OPENAI_API_KEY, or BROWSERBASE_API_KEY.'
+  // No key found — give the user clear instructions
+  apiError(
+    'No LLM API key found in ' + envFile,
+    'Add at least one key to ' + envFile + ':\n' +
+    '  GROQ_API_KEY=...        (free at https://console.groq.com)\n' +
+    '  ANTHROPIC_API_KEY=...   (https://console.anthropic.com)\n' +
+    '  OPENAI_API_KEY=...      (https://platform.openai.com)',
+    { keysChecked: ['ANTHROPIC_API_KEY', 'GROQ_API_KEY', 'OPENAI_API_KEY', 'BROWSERBASE_API_KEY'] }
   );
 }
 
@@ -111,6 +138,7 @@ function resolveProvider() {
   await stagehand.close();
   process.stdout.write(JSON.stringify({ ok: true, url, screenshot: screenshotPath, result, issues }) + '\n');
 })().catch(e => {
-  process.stdout.write(JSON.stringify({ ok: false, error: e.message }) + '\n');
+  const { type, action } = classifyError(e.message);
+  process.stdout.write(JSON.stringify({ ok: false, error: e.message, errorType: type, action, envFile }) + '\n');
   process.exit(1);
 });

@@ -44,7 +44,7 @@ const tokensPath  = flags['tokens'] || path.join(
 const selector    = flags['selector'] || ':root';
 
 if (!url) {
-  process.stderr.write('Usage: node figma-token-check.js <url> [--tokens=<path>] [--selector=:root]\n');
+  process.stdout.write(JSON.stringify({ ok: false, error: 'URL argument required', action: 'Usage: node figma-token-check.js <url> [--tokens=<path>] [--selector=:root]' }) + '\n');
   process.exit(1);
 }
 
@@ -85,8 +85,10 @@ function normalise(v) {
   // Load tokens
   if (!fss.existsSync(tokensPath)) {
     process.stdout.write(JSON.stringify({
-      ok: false, url, error: `Tokens file not found: ${tokensPath}. ` +
-        'Export from Tokens Studio (Figma plugin) or create a flat JSON map of CSS variable → value.',
+      ok: false, url,
+      error: `Tokens file not found: ${tokensPath}`,
+      action: 'Export tokens from the free Tokens Studio plugin in Figma → save as ' + tokensPath +
+              '\nOr create a flat JSON map: { "--css-var": "value", ... }',
     }) + '\n');
     process.exit(0);
   }
@@ -95,7 +97,7 @@ function normalise(v) {
   const tokenKeys = Object.keys(expected);
 
   if (tokenKeys.length === 0) {
-    process.stdout.write(JSON.stringify({ ok: false, url, error: 'No tokens parsed from file' }) + '\n');
+    process.stdout.write(JSON.stringify({ ok: false, url, error: 'No tokens parsed from file', action: 'Ensure the tokens file is either flat { "--var": "value" } or W3C DTCG nested format.' }) + '\n');
     process.exit(0);
   }
 
@@ -146,6 +148,12 @@ function normalise(v) {
   process.stdout.write(JSON.stringify(result, null, 2) + '\n');
   process.exit(result.ok ? 0 : 2); // exit 2 = token drift found (not a script error)
 })().catch(e => {
-  process.stdout.write(JSON.stringify({ ok: false, url, error: e.message }) + '\n');
+  const msg = e.message;
+  let action = 'Check the error above.';
+  if (msg.includes('net::ERR') || msg.includes('ECONNREFUSED') || msg.includes('ENOTFOUND'))
+    action = `Cannot reach ${url}. Ensure the dev server is running.`;
+  else if (msg.includes('Timeout') || msg.includes('timeout'))
+    action = `Page load timed out at ${url}. The server may be slow or unresponsive.`;
+  process.stdout.write(JSON.stringify({ ok: false, url, error: msg, action }) + '\n');
   process.exit(1);
 });

@@ -41,21 +41,33 @@ const outDir   = args['out']   || path.join(process.env.USERPROFILE || process.e
 const scale    = parseFloat(args['scale'] || '2');
 const listMode = args['list'] === 'true';
 
-if (!TOKEN) {
-  process.stderr.write('ERROR: FIGMA_ACCESS_TOKEN not set. Add it to ~/.claude/.env\n');
-  process.exit(1);
-}
-if (!fileKey) {
-  process.stderr.write('ERROR: --file=<key> required (the ID from your Figma URL)\n');
+function apiError(error, action, extra = {}) {
+  process.stdout.write(JSON.stringify({ ok: false, error, action, envFile: envPath, ...extra }) + '\n');
   process.exit(1);
 }
 
+if (!TOKEN) {
+  apiError(
+    'FIGMA_ACCESS_TOKEN not set',
+    'Add to ' + envPath + ':\n  FIGMA_ACCESS_TOKEN=your_token\n' +
+    'Get token: Figma → Settings → Security → Personal access tokens (scope: file_content:read)\n' +
+    'Then also add it to mcpServers.figma.env.FIGMA_ACCESS_TOKEN in ~/.claude.json'
+  );
+}
+if (!fileKey) {
+  apiError(
+    '--file=<key> required',
+    'Pass the file key from your Figma URL:\n  figma.com/design/YOUR_FILE_KEY/...\n' +
+    'Or set FIGMA_FILE_KEY=' + '<key>' + ' in ' + envPath
+  );
+}
+
 // ── HTTP helper ───────────────────────────────────────────────────────────────
-function figmaGet(path) {
+function figmaGet(apiPath) {
   return new Promise((resolve, reject) => {
     const options = {
       hostname: 'api.figma.com',
-      path,
+      path: apiPath,
       method:  'GET',
       headers: { 'X-Figma-Token': TOKEN },
     };
@@ -63,13 +75,22 @@ function figmaGet(path) {
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
-        if (res.statusCode !== 200) {
-          reject(new Error(`Figma API ${res.statusCode}: ${data.slice(0, 200)}`));
-        } else {
-          resolve(JSON.parse(data));
-        }
+        if (res.statusCode === 200) { resolve(JSON.parse(data)); return; }
+        const snippet = data.slice(0, 200);
+        if (res.statusCode === 401)
+          reject(new Error(`Figma API 401: Invalid or expired token. Regenerate FIGMA_ACCESS_TOKEN in ${envPath}. (${snippet})`));
+        else if (res.statusCode === 403)
+          reject(new Error(`Figma API 403: Permission denied. Ensure your token has file_content:read scope. (${snippet})`));
+        else if (res.statusCode === 404)
+          reject(new Error(`Figma API 404: File not found. Check --file=<key> matches your Figma URL. (${snippet})`));
+        else if (res.statusCode === 429)
+          reject(new Error(`Figma API 429: Rate limited. Wait ~30 seconds and retry. (${snippet})`));
+        else
+          reject(new Error(`Figma API ${res.statusCode}: ${snippet}`));
       });
-    }).on('error', reject);
+    }).on('error', e => {
+      reject(new Error(`Network error reaching api.figma.com: ${e.message}. Check your internet connection.`));
+    });
   });
 }
 
@@ -148,6 +169,18 @@ function slug(name) {
 
   process.stdout.write(JSON.stringify(results) + '\n');
 })().catch(e => {
-  process.stderr.write(`ERROR: ${e.message}\n`);
+  const msg = e.message;
+  let action = 'Check the error above.';
+  if (msg.includes('401') || msg.includes('expired') || msg.includes('Invalid or expired'))
+    action = `Regenerate your Figma token and update ${envPath}`;
+  else if (msg.includes('403') || msg.includes('scope'))
+    action = 'Ensure your Figma token has file_content:read scope (Figma → Settings → Security → Personal access tokens)';
+  else if (msg.includes('404') || msg.includes('not found'))
+    action = 'Verify --file=<key> matches the ID in your Figma URL: figma.com/design/YOUR_KEY/...';
+  else if (msg.includes('429') || msg.includes('Rate limited'))
+    action = 'Rate limited by Figma API. Wait ~30 seconds and retry.';
+  else if (msg.includes('Network error') || msg.includes('ENOTFOUND') || msg.includes('ECONNREFUSED'))
+    action = 'Cannot reach api.figma.com. Check your internet connection.';
+  process.stdout.write(JSON.stringify({ ok: false, error: msg, action, envFile: envPath }) + '\n');
   process.exit(1);
 });
