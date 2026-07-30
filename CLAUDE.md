@@ -118,6 +118,7 @@ Report any CSS custom property mismatches as additional issues.
 - **Figma baseline export**: `node ~/.claude/scripts/figma-baseline.js --file=<key> --nodes=<id1,id2>` — fetch Figma frames as PNG baselines (requires `FIGMA_ACCESS_TOKEN` in `~/.claude/.env`). Use `--list` to see all frames.
 - **Design token check**: `node ~/.claude/scripts/figma-token-check.js <url> --tokens=~/.claude/design-tokens.json` — compare CSS custom properties in live app against a design token JSON file.
 - **Snapshot baselines**: `cd ~/.claude/scripts && npm run snapshots:update` / `npm run snapshots`
+- **Selenium cross-browser check**: `node ~/.claude/scripts/selenium-xbrowser.js <url> <out-prefix>` — screenshots in **real Chrome, Edge, and Firefox** (not Playwright's patched Chromium); captures per-browser console errors via WebDriver BiDi (works on Firefox unlike CDP); optional `--pdf` (W3C print-to-PDF across all browsers), `--element=.selector` (component-level screenshot), `--browsers=chrome,edge,firefox` (subset).
 - **Stagehand** (AI browser fallback): `node ~/.claude/scripts/stagehand-fallback.js <url> "<task>"` — uses first available LLM key from `~/.claude/.env`.
 - **Proactive sweep**: `pwsh -File ~/.claude/scripts/sweep-all.ps1` — audits all live projects, writes audit log. No Claude session needed.
 - **Audit log**: `pwsh -File ~/.claude/scripts/audit-log.ps1 -Summary` — view history across all projects.

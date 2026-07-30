@@ -201,6 +201,36 @@ node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out 1280 800 --video
 
 ---
 
+## Cross-browser check with Selenium
+
+The Playwright-based workflow uses Chromium. Selenium drives the **real browsers installed on your machine** (Chrome, Edge, and Firefox), which catch browser-specific rendering bugs and console errors that Chromium alone won't surface.
+
+```powershell
+# Screenshots in Chrome, Edge, and Firefox — compare rendering side by side
+node ~/.claude/scripts/selenium-xbrowser.js http://localhost:3000 out
+
+# Chrome and Edge only (skip Firefox if not installed)
+node ~/.claude/scripts/selenium-xbrowser.js http://localhost:3000 out --browsers=chrome,edge
+
+# Screenshot a specific component in each browser
+node ~/.claude/scripts/selenium-xbrowser.js http://localhost:3000 out --element=".hero-section"
+
+# Test CSS print layout — produces a .pdf from each browser's print engine
+node ~/.claude/scripts/selenium-xbrowser.js http://localhost:3000 out --pdf
+```
+
+Output is a JSON array — one entry per browser with `out` (screenshot path), `consoleErrors`, and `networkErrors`. Browsers that aren't installed return `{ ok: false, skipped: true }` and are silently ignored by the monitor.
+
+**Why Selenium for this, not Playwright?**
+- Console errors and JS exceptions are captured via **WebDriver BiDi** — a W3C standard that works on Firefox natively, unlike CDP which is Chromium-only
+- `printPage()` is a W3C WebDriver command supported by Chrome, Edge, and Firefox; Playwright's `page.pdf()` works only in Chromium
+- Element-level screenshots via `element.takeScreenshot()` — useful for component visual regression
+- Selenium Manager (bundled) downloads the correct driver automatically — no PATH setup
+
+This check runs on demand, not in the automatic PostToolUse hook (three browsers × ~30s would be too slow for every edit).
+
+---
+
 ## Auto-fix control
 
 By default Claude fixes UI issues automatically. This can be overridden globally or per project in `~/.claude/project-registry.json`:
