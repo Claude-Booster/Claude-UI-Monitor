@@ -1125,6 +1125,181 @@ if ((Test-Path $e2eScript19) -and (Test-Path $nm19)) {
     Warn "E2E script or node_modules missing — skipping new UX field tests (Section 19)"
 }
 
+# ── 20. Round-2 UX audit fields + new flags ──────────────────────────────────
+Write-Host "`n── 20. Round-2 UX audit fields + new flag-gated checks ────────" -ForegroundColor Cyan
+
+$e2eScript20 = "$SCRIPTS\pw-e2e-test.js"
+$nm20        = "$SCRIPTS\node_modules"
+
+if ((Test-Path $e2eScript20) -and (Test-Path $nm20)) {
+    $src20 = Get-Content $e2eScript20 -Raw
+
+    # Source-level: new always-on functions
+    Assert "pw-e2e-test: runSVGAudit defined"               ($src20 -match 'async function runSVGAudit')
+    Assert "pw-e2e-test: runMediaAudit defined"             ($src20 -match 'async function runMediaAudit')
+    Assert "pw-e2e-test: runColorOnlyAudit defined"         ($src20 -match 'async function runColorOnlyAudit')
+    Assert "pw-e2e-test: runTextSelectabilityAudit defined" ($src20 -match 'async function runTextSelectabilityAudit')
+
+    # Source-level: new flag-gated functions
+    Assert "pw-e2e-test: runRequiredFieldsAudit defined"    ($src20 -match 'async function runRequiredFieldsAudit')
+    Assert "pw-e2e-test: runMissingFillModeAudit defined"   ($src20 -match 'async function runMissingFillModeAudit')
+    Assert "pw-e2e-test: runEmptyStatesAudit defined"       ($src20 -match 'async function runEmptyStatesAudit')
+
+    # Source-level: new flags parsed
+    Assert "pw-e2e-test: --required-fields flag handled"    ($src20 -match "requiredFieldsMode\s*=\s*flags\['required-fields'\]")
+    Assert "pw-e2e-test: --animation-fill flag handled"     ($src20 -match "animFillMode\s*=\s*flags\['animation-fill'\]")
+    Assert "pw-e2e-test: --empty-states flag handled"       ($src20 -match "emptyStatesMode\s*=\s*flags\['empty-states'\]")
+
+    # Source-level: extensions to existing functions
+    Assert "pw-e2e-test: missingHeight in runImageAudit"                ($src20 -match 'missingHeight')
+    Assert "pw-e2e-test: iconOnlyButtons in runDomA11yAudit"            ($src20 -match 'iconOnlyBtns')
+    Assert "pw-e2e-test: titleOnlyInteractive in runDomA11yAudit"       ($src20 -match 'titleOnly')
+    Assert "pw-e2e-test: stickyFixed in runLayoutAudit"                 ($src20 -match 'stickyFixed')
+    Assert "pw-e2e-test: removedFocusOutline in runInteractiveStateAudit" ($src20 -match 'removedFocusOutline')
+    Assert "pw-e2e-test: breakpointCount in runMediaQueryAudit"         ($src20 -match 'breakpointCount')
+    Assert "pw-e2e-test: infiniteAnimations in runAnimationDurationAudit" ($src20 -match 'infiniteAnimations')
+    Assert "pw-e2e-test: pointerEventsNone in runCursorAudit"           ($src20 -match 'pointerEventsNone')
+
+    # Live URL tests
+    $t20Port = 19993
+    $t20Dir  = "$env:TEMP\pw-s20"
+    if (-not (Test-Path $t20Dir)) { New-Item -ItemType Directory -Force $t20Dir | Out-Null }
+    @'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Section 20 Test Page</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    header         { position: fixed; top: 0; height: 60px; background: #333; width: 100%; }
+    button:focus   { outline: none; }
+    .no-select     { user-select: none; }
+    .spinner       { animation: spin 1s linear infinite; }
+    @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    .fade          { animation-name: fade; animation-duration: 0.5s; }
+    @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+    .link-nowrap a { text-decoration: none; color: blue; }
+    .blocked       { pointer-events: none; }
+  </style>
+</head>
+<body>
+  <header>Fixed Header</header>
+  <svg width="100" height="100"><circle cx="50" cy="50" r="40"/></svg>
+  <video width="320" height="180"><source src="test.mp4" type="video/mp4"></video>
+  <video autoplay width="160" height="90"><source src="test2.mp4"></video>
+  <button><svg aria-hidden="true" width="16" height="16"><path d="M0 0"/></svg></button>
+  <button title="Close"><svg aria-hidden="true" width="16" height="16"><path d="M0 0"/></svg></button>
+  <img src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==" alt="test" width="200">
+  <p class="no-select">This is copyable-looking text but selection is blocked for users who need it.</p>
+  <div class="link-nowrap"><p>Visit our <a href="/about">about page</a> for more information.</p></div>
+  <button class="blocked" style="width:80px;height:36px">Looks clickable</button>
+  <div class="spinner" style="width:30px;height:30px;border:3px solid #ccc;border-top-color:#333;border-radius:50%"></div>
+  <ul></ul>
+  <form>
+    <input type="text" required placeholder="Required no aria-required">
+    <input type="email" required aria-required="true" placeholder="Email with aria-required">
+  </form>
+  <div class="fade">Animated without fill-mode</div>
+</body>
+</html>
+'@ | Set-Content "$t20Dir\index.html"
+
+    $t20Proc = Start-Process python -ArgumentList "-m", "http.server", $t20Port, "--bind", "127.0.0.1" -WorkingDirectory $t20Dir -PassThru -WindowStyle Hidden
+    Start-Sleep 2
+
+    $t20Url = "http://127.0.0.1:$t20Port/"
+
+    $ss20 = "$env:TEMP\s20-real.png"
+    $r20  = (node $e2eScript20 $t20Url $ss20 1280 800 2>$null) -join ''
+    try { $j20 = $r20 | ConvertFrom-Json } catch { $j20 = $null }
+
+    # svgA11y
+    Assert "real URL s20: svgA11y field present"             ($j20 -and $j20.PSObject.Properties['svgA11y'])
+    Assert "real URL s20: svgA11y.warnings is array"         ($j20 -and $j20.svgA11y.PSObject.Properties['warnings'])
+    Assert "real URL s20: svgA11y.missingRole >= 1"          ($j20 -and $j20.svgA11y.missingRole -ge 1)
+    Assert "real URL s20: svgA11y.missingTitle >= 1"         ($j20 -and $j20.svgA11y.missingTitle -ge 1)
+
+    # mediaA11y
+    Assert "real URL s20: mediaA11y field present"           ($j20 -and $j20.PSObject.Properties['mediaA11y'])
+    Assert "real URL s20: mediaA11y.warnings is array"       ($j20 -and $j20.mediaA11y.PSObject.Properties['warnings'])
+    Assert "real URL s20: mediaA11y.autoplayWithoutMuted >= 1" ($j20 -and $j20.mediaA11y.autoplayWithoutMuted.Count -ge 1)
+    Assert "real URL s20: mediaA11y.missingCaptions >= 1"   ($j20 -and $j20.mediaA11y.missingCaptions.Count -ge 1)
+
+    # colorOnly
+    Assert "real URL s20: colorOnly field present"           ($j20 -and $j20.PSObject.Properties['colorOnly'])
+    Assert "real URL s20: colorOnly.warnings is array"       ($j20 -and $j20.colorOnly.PSObject.Properties['warnings'])
+    Assert "real URL s20: colorOnly.colorOnlyLinks.Count >= 1" ($j20 -and $j20.colorOnly.colorOnlyLinks.Count -ge 1)
+
+    # textSelectability
+    Assert "real URL s20: textSelectability field present"   ($j20 -and $j20.PSObject.Properties['textSelectability'])
+    Assert "real URL s20: textSelectability.warnings array"  ($j20 -and $j20.textSelectability.PSObject.Properties['warnings'])
+    Assert "real URL s20: textSelectability.count >= 1"      ($j20 -and $j20.textSelectability.count -ge 1)
+
+    # domA11y extensions
+    Assert "real URL s20: domA11y.iconOnlyButtons is a number"    ($j20 -and $j20.domA11y.PSObject.Properties['iconOnlyButtons'])
+    Assert "real URL s20: domA11y.iconOnlyButtons >= 1"           ($j20 -and $j20.domA11y.iconOnlyButtons -ge 1)
+    Assert "real URL s20: domA11y.titleOnlyInteractive is number" ($j20 -and $j20.domA11y.PSObject.Properties['titleOnlyInteractive'])
+    Assert "real URL s20: domA11y.titleOnlyInteractive >= 1"      ($j20 -and $j20.domA11y.titleOnlyInteractive -ge 1)
+
+    # images.missingHeight
+    Assert "real URL s20: images.missingHeight is a number"  ($j20 -and $j20.images.PSObject.Properties['missingHeight'])
+    Assert "real URL s20: images.missingHeight >= 1"         ($j20 -and $j20.images.missingHeight -ge 1)
+
+    # layout.stickyFixed
+    Assert "real URL s20: layout.stickyFixed is array"       ($j20 -and $j20.layout.PSObject.Properties['stickyFixed'])
+    Assert "real URL s20: layout.stickyFixed.Count >= 1"     ($j20 -and $j20.layout.stickyFixed.Count -ge 1)
+
+    # interactiveStates.removedFocusOutline
+    Assert "real URL s20: interactiveStates.removedFocusOutline array" ($j20 -and $j20.interactiveStates.PSObject.Properties['removedFocusOutline'])
+    Assert "real URL s20: removedFocusOutline.Count >= 1"    ($j20 -and $j20.interactiveStates.removedFocusOutline.Count -ge 1)
+
+    # mediaQuerySupport breakpoints
+    Assert "real URL s20: mediaQuerySupport.hasResponsiveBreakpoints" ($j20 -and $j20.mediaQuerySupport.PSObject.Properties['hasResponsiveBreakpoints'])
+    Assert "real URL s20: hasResponsiveBreakpoints is false (no media queries in test HTML)" ($j20 -and $j20.mediaQuerySupport.hasResponsiveBreakpoints -eq $false)
+    Assert "real URL s20: breakpointCount == 0"              ($j20 -and $j20.mediaQuerySupport.breakpointCount -eq 0)
+
+    # animationDurations.infiniteAnimations
+    Assert "real URL s20: animationDurations.infiniteAnimations array" ($j20 -and $j20.animationDurations.PSObject.Properties['infiniteAnimations'])
+    Assert "real URL s20: infiniteAnimations.Count >= 1"     ($j20 -and $j20.animationDurations.infiniteAnimations.Count -ge 1)
+
+    # cursor.pointerEventsNone
+    Assert "real URL s20: cursor.pointerEventsNone is number" ($j20 -and $j20.cursor.PSObject.Properties['pointerEventsNone'])
+    Assert "real URL s20: cursor.pointerEventsNone >= 1"      ($j20 -and $j20.cursor.pointerEventsNone -ge 1)
+
+    # --required-fields
+    $ss20Rf = "$env:TEMP\s20-rf.png"
+    $r20Rf  = (node $e2eScript20 $t20Url $ss20Rf 1280 800 --required-fields 2>$null) -join ''
+    try { $j20Rf = $r20Rf | ConvertFrom-Json } catch { $j20Rf = $null }
+    Assert "--required-fields: requiredFields field present"           ($j20Rf -and $j20Rf.PSObject.Properties['requiredFields'])
+    Assert "--required-fields: requiredFields.count >= 1"              ($j20Rf -and $j20Rf.requiredFields.count -ge 1)
+    Assert "--required-fields: missingAriaRequired is array"           ($j20Rf -and $j20Rf.requiredFields.PSObject.Properties['missingAriaRequired'])
+    Assert "--required-fields: missingAriaRequired.Count >= 1"         ($j20Rf -and $j20Rf.requiredFields.missingAriaRequired.Count -ge 1)
+
+    # --animation-fill
+    $ss20Af = "$env:TEMP\s20-af.png"
+    $r20Af  = (node $e2eScript20 $t20Url $ss20Af 1280 800 --animation-fill 2>$null) -join ''
+    try { $j20Af = $r20Af | ConvertFrom-Json } catch { $j20Af = $null }
+    Assert "--animation-fill: missingFillMode field in animationDurations" ($j20Af -and $j20Af.animationDurations.PSObject.Properties['missingFillMode'])
+    Assert "--animation-fill: missingFillMode is array"                ($j20Af -and $j20Af.animationDurations.missingFillMode -is [array])
+    Assert "--animation-fill: missingFillMode.Count >= 1"              ($j20Af -and $j20Af.animationDurations.missingFillMode.Count -ge 1)
+
+    # --empty-states
+    $ss20Es = "$env:TEMP\s20-es.png"
+    $r20Es  = (node $e2eScript20 $t20Url $ss20Es 1280 800 --empty-states 2>$null) -join ''
+    try { $j20Es = $r20Es | ConvertFrom-Json } catch { $j20Es = $null }
+    Assert "--empty-states: emptyStates field present"                 ($j20Es -and $j20Es.PSObject.Properties['emptyStates'])
+    Assert "--empty-states: emptyStates.spinners is array"             ($j20Es -and $j20Es.emptyStates.PSObject.Properties['spinners'])
+    Assert "--empty-states: emptyStates.emptyContainers is array"      ($j20Es -and $j20Es.emptyStates.PSObject.Properties['emptyContainers'])
+    Assert "--empty-states: spinners or emptyContainers detected"      ($j20Es -and ($j20Es.emptyStates.spinners.Count -ge 1 -or $j20Es.emptyStates.emptyContainers.Count -ge 1))
+
+    if ($t20Proc) {
+        try { Stop-Process -Id $t20Proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+    }
+} else {
+    Warn "E2E script or node_modules missing — skipping round-2 UX field tests (Section 20)"
+}
+
 # ── Summary ──────────────────────────────────────────────────────────────────
 Write-Host "`n── Summary ───────────────────────────────────────────────────" -ForegroundColor Cyan
 $total = $pass + $fail

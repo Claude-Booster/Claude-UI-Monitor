@@ -98,22 +98,26 @@ Every screenshot run (hook or manual) includes these zero-overhead audits:
 | Field | What it reports |
 |---|---|
 | `meta` | `title`, `viewport`, `blocksZoom` (WCAG 1.4.4), `lang`, `charset`, `dir`; `issues[]` for zoom-blocking or missing `lang` |
-| `images` | Broken, missing alt, oversized; **lazy-above-fold** (hurts LCP); **missing `fetchpriority`** on hero images; **missing `srcset`** on wide images |
+| `images` | Broken, missing alt, oversized; **lazy-above-fold** (hurts LCP); **missing `fetchpriority`** on hero images; **missing `srcset`** on wide images; **missing `height`** attr (causes layout shift) |
 | `scripts` | **Render-blocking** third-party scripts that delay page display |
 | `touchTargets` | Interactive elements below **24×24px** (WCAG 2.5.8 AA) — `failingAA` count + element details |
 | `headings` | `h1Count`, heading **level skips** (h2→h4 etc.), `warnings[]` (WCAG 2.4.6) |
-| `domA11y` | **Broken ARIA ID references** (`aria-labelledby` etc.); **unlabeled form inputs** (WCAG 1.3.1) |
-| `layout` | **Horizontal scroll** / viewport overflow — `hasHorizontalScroll`, `wideElements[]`; **overflow-hidden clipping** — `hiddenOverflowElements[]` |
+| `domA11y` | **Broken ARIA ID references** (`aria-labelledby` etc.); **unlabeled form inputs** (WCAG 1.3.1); **icon-only buttons** missing accessible name; **title-only interactive elements** (invisible on touch) |
+| `layout` | **Horizontal scroll** / viewport overflow — `hasHorizontalScroll`, `wideElements[]`; **overflow-hidden clipping** — `hiddenOverflowElements[]`; **sticky/fixed elements** covering scrolled-to content — `stickyFixed[]` |
 | `bundle` | JS / CSS / image KB; largest + slowest resources |
 | `fonts` | Loaded/failed fonts, FOIT risk (`font-display: auto/block`), FOUT risk (`swap`) |
 | `typography` | Font-size < 16px on mobile (triggers iOS auto-zoom); line-height < 1.2 (WCAG 1.4.12); `text-overflow:ellipsis` truncation |
-| `interactiveStates` | CSS `:hover` / `:focus` / `:disabled` rule counts — flags missing interactive state styles |
-| `cursor` | Interactive elements missing `cursor:pointer` — users get no click affordance |
+| `interactiveStates` | CSS `:hover` / `:focus` / `:disabled` rule counts; **`outline:0` without `:focus-visible` replacement** — removes focus rings for all users |
+| `cursor` | Interactive elements missing `cursor:pointer`; **`pointer-events:none`** on visible interactive elements (looks clickable, isn't) |
 | `viewportUnits` | CSS rules using `height:100vh` — clipped by mobile browser chrome (use `dvh` instead) |
-| `mediaQuerySupport` | Whether CSS contains `prefers-color-scheme: dark` and `prefers-reduced-motion: reduce` media queries |
+| `mediaQuerySupport` | `prefers-color-scheme:dark` and `prefers-reduced-motion:reduce` CSS presence; **`hasResponsiveBreakpoints`** — flags pages with zero `@media (max/min-width)` queries |
 | `formUX` | `email`/`password`/`tel` inputs missing `autocomplete` — mobile autofill won't work |
-| `animationDurations` | Transitions > 300ms (sluggish hover/focus); animations > 1s (feels slow) |
+| `animationDurations` | Transitions > 300ms (sluggish hover/focus); animations > 1s (feels slow); **infinite animations** without pause mechanism (WCAG 2.2.2) |
 | `stacking` | Elements with `z-index > 9999` — likely copy-pasted modal fixes causing stacking anomalies |
+| `svgA11y` | Informative SVGs missing `role="img"` and `<title>` element — invisible to screen readers |
+| `mediaA11y` | `<video autoplay>` without `muted` (WCAG 1.4.2 / browser blocks); `<video>` missing `<track kind="captions">` (WCAG 1.2.2) |
+| `colorOnly` | Inline links distinguished from surrounding body text **only by color** — fails WCAG 1.4.1 |
+| `textSelectability` | Text paragraphs/code blocks with `user-select:none` — users cannot copy content they need |
 
 **Optional flag-gated checks:**
 
@@ -132,6 +136,9 @@ Every screenshot run (hook or manual) includes these zero-overhead audits:
 | `--text-spacing` | Inject WCAG 1.4.12 overrides; screenshot + detect clipped text → `textSpacing` | ~500ms |
 | `--paint-complexity` | Detect expensive `filter`/`backdrop-filter`/multi-shadow on large elements → `paintComplexity` | ~100ms |
 | `--state-contrast` | WCAG 1.4.3 contrast ratio in default + hover state for buttons and links → `stateContrast` | ~2-5s |
+| `--required-fields` | Required form fields (`[required]`) missing `aria-required="true"` → `requiredFields` | ~50ms |
+| `--animation-fill` | Animations missing `fill-mode:forwards/both` — element snaps back after animation ends → `animationDurations.missingFillMode` | ~50ms |
+| `--empty-states` | Stuck loading spinners visible after page load; empty list/grid containers with no empty-state UI → `emptyStates` | ~100ms |
 
 ---
 
@@ -254,6 +261,9 @@ node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --r
 node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --text-spacing      # WCAG 1.4.12 text-spacing override clipping check
 node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --paint-complexity  # expensive CSS paint properties on large elements
 node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --state-contrast    # WCAG 1.4.3 contrast in default + hover state
+node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --required-fields   # required fields missing aria-required="true"
+node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --animation-fill    # animations missing fill-mode:forwards/both (snap-back glitch)
+node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --empty-states      # stuck spinners + empty list/grid containers
 ```
 
 ---

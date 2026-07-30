@@ -5,22 +5,26 @@
 //
 // Always-on for real URLs (zero overhead):
 //   meta              title, viewport, blocksZoom (WCAG 1.4.4), lang, charset, dir
-//   images            broken, missingAlt, oversized, lazy-above-fold, missingFetchPriority, missingSrcset
+//   images            broken, missingAlt, oversized, lazy-above-fold, missingFetchPriority, missingSrcset, missingHeight
 //   scripts           render-blocking third-party scripts (delays page display)
 //   touchTargets      interactive elements < 24×24px (WCAG 2.5.8)
 //   headings          h1 count, heading level skips (WCAG 2.4.6)
-//   domA11y           broken ARIA ID refs, unlabeled form inputs (WCAG 1.3.1)
-//   layout            horizontal scroll / viewport overflow / overflow-hidden clipping
+//   domA11y           broken ARIA ID refs, unlabeled inputs, icon-only buttons, title-only interactive (WCAG 1.3.1)
+//   layout            horizontal scroll, overflow-hidden clipping, sticky/fixed elements covering content
 //   bundle            JS/CSS/image KB, largest + slowest resources
 //   fonts             loaded/failed, FOIT/FOUT risk
 //   typography        font-size < 16px on mobile, line-height < 1.2, ellipsis truncation
-//   interactiveStates :hover/:focus/:disabled CSS rule presence
-//   cursor            interactive elements missing cursor:pointer
+//   interactiveStates :hover/:focus/:disabled CSS rules, outline:0 without :focus-visible replacement
+//   cursor            interactive elements missing cursor:pointer, visible elements with pointer-events:none
 //   viewportUnits     height:100vh rules that clip on mobile (use dvh instead)
-//   mediaQuerySupport prefers-color-scheme:dark and prefers-reduced-motion CSS presence
+//   mediaQuerySupport prefers-color-scheme:dark, prefers-reduced-motion, responsive breakpoints presence
 //   formUX            missing autocomplete attributes on email/password/tel inputs
-//   animationDurations animations > 1s or transitions > 300ms
+//   animationDurations animations > 1s, transitions > 300ms, infinite animations (WCAG 2.2.2)
 //   stacking          z-index > 9999 anomalies
+//   svgA11y           informative SVGs missing role="img" and <title> element
+//   mediaA11y         video autoplay without muted (WCAG 1.4.2), missing captions track (WCAG 1.2.2)
+//   colorOnly         inline links distinguished from body text only by color (WCAG 1.4.1)
+//   textSelectability text content blocked from copying with user-select:none
 //
 // Flag-gated checks:
 //   --dark-mode         screenshot + axe in dark mode → darkMode, darkModeA11y
@@ -36,6 +40,9 @@
 //   --text-spacing      WCAG 1.4.12 text-spacing override clipping check → textSpacing
 //   --paint-complexity  expensive CSS paint properties on large elements → paintComplexity
 //   --state-contrast    WCAG 1.4.3 contrast in default + hover state → stateContrast
+//   --required-fields   required form fields missing aria-required="true" → requiredFields
+//   --animation-fill    animations missing fill-mode:forwards/both (snap-back glitch) → animationDurations.missingFillMode
+//   --empty-states      stuck loading spinners + empty list/grid containers → emptyStates
 //
 // Advanced flags (auto-detected or explicit):
 //   --detect-advanced  auto-enable based on CSS animations, WebGL, canvas, GSAP, etc.
@@ -87,10 +94,13 @@ const printLayout     = flags['print']            === 'true';
 const noJsMode        = flags['no-js']            === 'true';
 const focusAudit      = flags['focus-audit']      === 'true';
 const linkCheckMode   = flags['link-check']       === 'true';
-const reflowMode      = flags['reflow']           === 'true';
-const textSpacingMode = flags['text-spacing']     === 'true';
-const paintComplexity = flags['paint-complexity'] === 'true';
-const stateContrast   = flags['state-contrast']   === 'true';
+const reflowMode         = flags['reflow']           === 'true';
+const textSpacingMode    = flags['text-spacing']     === 'true';
+const paintComplexity    = flags['paint-complexity'] === 'true';
+const stateContrast      = flags['state-contrast']   === 'true';
+const requiredFieldsMode = flags['required-fields']  === 'true';
+const animFillMode       = flags['animation-fill']   === 'true';
+const emptyStatesMode    = flags['empty-states']     === 'true';
 
 // ── Response tracking (image formats only) ────────────────────────────────────
 function setupResponseTracking(page) {
@@ -283,6 +293,7 @@ async function runImageAudit(page) {
         foldIssue,
         isHeroCandidate: isAboveFold && img.clientWidth > 300 && !hasFP && !hasLazy,
         missingSrcset:   !img.srcset && !img.closest('picture') && img.clientWidth > 200,
+        missingHeight:   !img.hasAttribute('height') && img.clientWidth > 100,
       };
     });
     const lazyAboveFold  = imgs.filter(i => i.foldIssue === 'LAZY_ABOVE_FOLD');
@@ -297,6 +308,7 @@ async function runImageAudit(page) {
       lazyAboveFold:        lazyAboveFold.length,
       missingFetchPriority: heroCandidates.length,
       missingSrcset:        missingSrcset.length,
+      missingHeight:        imgs.filter(i => i.missingHeight).length,
       details: {
         broken:       imgs.filter(i => i.broken).map(i => i.src),
         missingAlt:   imgs.filter(i => i.missingAlt).map(i => i.src || '(no src)'),
@@ -430,12 +442,36 @@ async function runDomA11yAudit(page) {
       if (id) { try { if (document.querySelector(`label[for="${CSS.escape(id)}"]`)) return false; } catch {} }
       return true;
     });
+    const iconOnlyBtns = [...document.querySelectorAll('button, [role="button"]')]
+      .filter(el => {
+        const r = el.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) return false;
+        if (el.getAttribute('aria-label') || el.getAttribute('aria-labelledby') || el.getAttribute('title')) return false;
+        return !el.textContent.trim();
+      }).slice(0, 10).map(el => ({
+        tag: el.tagName.toLowerCase(),
+        class: (el.className || '').trim().split(/\s+/)[0] || null,
+        inner: el.innerHTML.replace(/\s+/g, ' ').trim().slice(0, 60),
+      }));
+    const titleOnly = [...document.querySelectorAll('button, a[href], [role="button"], input, select')]
+      .filter(el => {
+        if (!el.getAttribute('title')) return false;
+        if (el.getAttribute('aria-label') || el.getAttribute('aria-labelledby')) return false;
+        return !el.textContent.trim();
+      }).slice(0, 10).map(el => ({
+        tag: el.tagName.toLowerCase(),
+        title: (el.getAttribute('title') || '').slice(0, 40),
+      }));
     return {
       brokenAriaRefs: brokenAriaRefs.slice(0, 10),
       unlabeledInputs: unlabeled.length,
+      iconOnlyButtons: iconOnlyBtns.length,
+      titleOnlyInteractive: titleOnly.length,
       warnings: [
         brokenAriaRefs.length > 0 && `${brokenAriaRefs.length} broken ARIA reference(s)`,
         unlabeled.length > 0      && `${unlabeled.length} form input(s) missing accessible label (WCAG 1.3.1)`,
+        iconOnlyBtns.length > 0   && `${iconOnlyBtns.length} button(s) with no accessible name — icon-only, add aria-label`,
+        titleOnly.length > 0      && `${titleOnly.length} interactive element(s) use title-only label (invisible on touch devices)`,
       ].filter(Boolean),
     };
   });
@@ -461,11 +497,26 @@ async function runLayoutAudit(page) {
       class: (el.className || '').trim().split(/\s+/)[0] || null,
       hiddenPx: el.scrollHeight - el.clientHeight,
     }));
+    const stickyFixed = [...document.querySelectorAll('*')]
+      .filter(el => {
+        const s = window.getComputedStyle(el);
+        const pos = s.position;
+        if (pos !== 'fixed' && pos !== 'sticky') return false;
+        const r = el.getBoundingClientRect();
+        if (r.height < 40) return false;
+        const topNum = parseFloat(s.top), bottomNum = parseFloat(s.bottom);
+        return (!isNaN(topNum) && topNum === 0) || (!isNaN(bottomNum) && bottomNum === 0);
+      }).slice(0, 5).map(el => {
+        const s = window.getComputedStyle(el);
+        const r = el.getBoundingClientRect();
+        return { tag: el.tagName.toLowerCase(), class: (el.className || '').trim().split(/\s+/)[0] || null, position: s.position, height: Math.round(r.height) };
+      });
     return {
-      hasHorizontalScroll, excessPx, wideElements, hiddenOverflowElements,
+      hasHorizontalScroll, excessPx, wideElements, hiddenOverflowElements, stickyFixed,
       warnings: [
         hasHorizontalScroll && `Page is ${excessPx}px wider than viewport — likely mobile breakage`,
         hiddenOverflowElements.length > 0 && `${hiddenOverflowElements.length} element(s) clip overflowing content (overflow:hidden)`,
+        stickyFixed.length > 0 && `${stickyFixed.length} sticky/fixed element(s) at top:0 or bottom:0 (height ${stickyFixed[0]?.height}px) may cover scrolled-to content`,
       ].filter(Boolean),
     };
   });
@@ -526,15 +577,49 @@ async function runInteractiveStateAudit(page) {
     const interactive = [...document.querySelectorAll('button, a[href], [role="button"], input[type="submit"], input[type="button"]')]
       .filter(el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; }).length;
     const hasDisabled = document.querySelectorAll('[disabled]').length > 0;
+    const hasFocusVisible = new Set();
+    for (const sheet of document.styleSheets) {
+      try {
+        for (const rule of sheet.cssRules) {
+          if (rule instanceof CSSStyleRule && /:focus-visible/.test(rule.selectorText || '')) {
+            const outline = rule.style.outline || rule.style.getPropertyValue('outline');
+            if (outline && outline !== 'none' && outline !== '0' && outline !== '0px')
+              hasFocusVisible.add((rule.selectorText || '').replace(/:focus-visible[^,]*/g, '').trim());
+          }
+        }
+      } catch {}
+    }
+    const removedFocusOutline = [];
+    for (const sheet of document.styleSheets) {
+      try {
+        for (const rule of sheet.cssRules) {
+          if (rule instanceof CSSStyleRule) {
+            const sel = rule.selectorText || '';
+            if (/:focus/.test(sel) && !/:focus-visible/.test(sel)) {
+              const outline = rule.style.outline || rule.style.getPropertyValue('outline');
+              const outlineStyle = rule.style.getPropertyValue('outline-style');
+              const outlineWidth = rule.style.getPropertyValue('outline-width');
+              const removes = (outline === 'none' || outline === '0' || outlineStyle === 'none' || outlineWidth === '0' || outlineWidth === '0px');
+              if (removes) {
+                const base = sel.replace(/:focus[^\s,]*/g, '').trim();
+                if (!hasFocusVisible.has(base)) removedFocusOutline.push({ selector: sel.slice(0, 80) });
+              }
+            }
+          }
+        }
+      } catch {}
+    }
     return {
-      hoverRuleCount:    hoverCount,
-      focusRuleCount:    focusCount,
-      disabledRuleCount: disabledCount,
-      interactiveCount:  interactive,
+      hoverRuleCount:     hoverCount,
+      focusRuleCount:     focusCount,
+      disabledRuleCount:  disabledCount,
+      interactiveCount:   interactive,
+      removedFocusOutline: [...new Map(removedFocusOutline.map(x => [x.selector, x])).values()].slice(0, 10),
       warnings: [
         hoverCount   === 0 && interactive > 0 && 'No :hover CSS rules found — interactive elements lack hover feedback',
         focusCount   === 0 && interactive > 0 && 'No :focus/:focus-visible CSS rules found — keyboard users get no focus indication',
         disabledCount=== 0 && hasDisabled      && 'No :disabled CSS rules — disabled elements look identical to enabled ones',
+        removedFocusOutline.length > 0         && `${removedFocusOutline.length} rule(s) remove focus outline without :focus-visible replacement (WCAG 2.4.7)`,
       ].filter(Boolean),
     };
   });
@@ -553,11 +638,20 @@ async function runCursorAudit(page) {
         text:   (el.textContent || el.getAttribute('aria-label') || '').trim().slice(0, 40),
         cursor: window.getComputedStyle(el).cursor,
       }));
+    const pointerEventsNoneEls = els.filter(el => window.getComputedStyle(el).pointerEvents === 'none')
+      .slice(0, 10).map(el => ({
+        tag:  el.tagName.toLowerCase(),
+        text: (el.textContent || el.getAttribute('aria-label') || '').trim().slice(0, 40),
+      }));
     return {
       checked: els.length,
       missingPointer: missingPointer.length,
+      pointerEventsNone: pointerEventsNoneEls.length,
       details: missingPointer,
-      warnings: missingPointer.length > 0 ? [`${missingPointer.length} interactive element(s) missing cursor:pointer`] : [],
+      warnings: [
+        missingPointer.length > 0        && `${missingPointer.length} interactive element(s) missing cursor:pointer`,
+        pointerEventsNoneEls.length > 0  && `${pointerEventsNoneEls.length} interactive element(s) with pointer-events:none — visible but unclickable`,
+      ].filter(Boolean),
     };
   });
 }
@@ -590,26 +684,30 @@ async function runViewportUnitsAudit(page) {
 
 async function runMediaQueryAudit(page) {
   return page.evaluate(() => {
-    let darkModeRules = 0, reducedMotionRules = 0;
+    let darkModeRules = 0, reducedMotionRules = 0, breakpointCount = 0;
     for (const sheet of document.styleSheets) {
       try {
         for (const rule of sheet.cssRules) {
           if (rule instanceof CSSMediaRule) {
             const cond = rule.conditionText || rule.media?.mediaText || '';
-            if (/prefers-color-scheme\s*:\s*dark/.test(cond))       darkModeRules++;
-            if (/prefers-reduced-motion\s*:\s*reduce/.test(cond))   reducedMotionRules++;
+            if (/prefers-color-scheme\s*:\s*dark/.test(cond))     darkModeRules++;
+            if (/prefers-reduced-motion\s*:\s*reduce/.test(cond)) reducedMotionRules++;
+            if (/\((?:max|min)-width/.test(cond))                 breakpointCount++;
           }
         }
       } catch {}
     }
     return {
-      hasDarkModeCSS:          darkModeRules > 0,
-      darkModeCSSRuleCount:    darkModeRules,
-      hasReducedMotionCSS:     reducedMotionRules > 0,
-      reducedMotionCSSRuleCount: reducedMotionRules,
+      hasDarkModeCSS:           darkModeRules > 0,
+      darkModeCSSRuleCount:     darkModeRules,
+      hasReducedMotionCSS:      reducedMotionRules > 0,
+      reducedMotionCSSRuleCount:reducedMotionRules,
+      hasResponsiveBreakpoints: breakpointCount > 0,
+      breakpointCount,
       warnings: [
         darkModeRules    === 0 && 'No prefers-color-scheme:dark CSS — dark mode users see forced light theme',
         reducedMotionRules === 0 && 'No prefers-reduced-motion:reduce CSS — animations play for motion-sensitive users',
+        breakpointCount  === 0 && 'No responsive breakpoints found — layout may not adapt to mobile screens',
       ].filter(Boolean),
     };
   });
@@ -646,7 +744,7 @@ async function runAnimationDurationAudit(page) {
       if (!val || val === '0s') return 0;
       return Math.max(...val.split(',').map(p => { const v = parseFloat(p); return p.includes('ms') ? v : v * 1000; }));
     };
-    const longAnimations = [], longTransitions = [];
+    const longAnimations = [], longTransitions = [], infiniteAnimations = [];
     for (const sheet of document.styleSheets) {
       try {
         for (const rule of sheet.cssRules) {
@@ -656,17 +754,25 @@ async function runAnimationDurationAudit(page) {
             const td = rule.style.getPropertyValue('transition-duration');
             if (ad) { const ms = parseDur(ad); if (ms > SLOW_ANIM_MS) longAnimations.push({ selector: sel, duration: ad.trim(), ms }); }
             if (td) { const ms = parseDur(td); if (ms > SLOW_TRANS_MS) longTransitions.push({ selector: sel, duration: td.trim(), ms }); }
+            const iterCount = rule.style.getPropertyValue('animation-iteration-count');
+            const animShorthand = rule.style.getPropertyValue('animation');
+            const isInfinite = iterCount === 'infinite' || (animShorthand && /\binfinite\b/.test(animShorthand));
+            if (isInfinite) {
+              const animName = rule.style.getPropertyValue('animation-name') || (animShorthand || '').split(' ')[0];
+              if (animName && animName !== 'none' && animName !== '') infiniteAnimations.push({ selector: sel, animationName: animName.slice(0, 40) });
+            }
           }
         }
       } catch {}
     }
     const unique = arr => [...new Map(arr.map(x => [x.selector, x])).values()].slice(0, 10);
-    const ua = unique(longAnimations), ut = unique(longTransitions);
+    const ua = unique(longAnimations), ut = unique(longTransitions), ui = unique(infiniteAnimations);
     return {
-      longAnimations: ua, longTransitions: ut,
+      longAnimations: ua, longTransitions: ut, infiniteAnimations: ui,
       warnings: [
         ua.length > 0 && `${ua.length} animation(s) > 1s — may feel sluggish`,
         ut.length > 0 && `${ut.length} transition(s) > 300ms — hover/focus response feels slow`,
+        ui.length > 0 && `${ui.length} infinite animation(s) — should be pausable per WCAG 2.2.2`,
       ].filter(Boolean),
     };
   });
@@ -686,6 +792,111 @@ async function runStackingAudit(page) {
     return {
       veryHighZIndex: veryHigh,
       warnings: veryHigh.length > 0 ? [`${veryHigh.length} element(s) with z-index > 9999 — may cause stacking/modal issues`] : [],
+    };
+  });
+}
+
+async function runSVGAudit(page) {
+  return page.evaluate(() => {
+    const svgs = [...document.querySelectorAll('svg')].filter(svg => {
+      const r = svg.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    });
+    const decorative = svgs.filter(svg =>
+      svg.getAttribute('aria-hidden') === 'true' ||
+      svg.getAttribute('role') === 'presentation' ||
+      svg.getAttribute('role') === 'none'
+    );
+    const informative = svgs.filter(svg => !decorative.includes(svg));
+    const missingRole  = informative.filter(svg => svg.getAttribute('role') !== 'img').length;
+    const missingTitle = informative.filter(svg => !svg.querySelector('title')).length;
+    return {
+      total: svgs.length,
+      decorativeCount: decorative.length,
+      missingRole,
+      missingTitle,
+      warnings: [
+        missingRole  > 0 && `${missingRole} informative SVG(s) missing role="img"`,
+        missingTitle > 0 && `${missingTitle} informative SVG(s) missing <title> element (screen reader description)`,
+      ].filter(Boolean),
+    };
+  });
+}
+
+async function runMediaAudit(page) {
+  return page.evaluate(() => {
+    const videos = [...document.querySelectorAll('video')];
+    const autoplayWithoutMuted = videos
+      .filter(v => v.hasAttribute('autoplay') && !v.hasAttribute('muted'))
+      .map(v => ({ src: v.currentSrc || v.querySelector('source')?.src || '(no src)', hasControls: v.hasAttribute('controls') }));
+    const missingCaptions = videos
+      .filter(v => v.getAttribute('aria-hidden') !== 'true')
+      .filter(v => ![...v.querySelectorAll('track')].some(t => t.kind === 'captions' || t.kind === 'subtitles'))
+      .map(v => ({ src: v.currentSrc || v.querySelector('source')?.src || '(no src)' }));
+    return {
+      videoCount: videos.length,
+      autoplayWithoutMuted: autoplayWithoutMuted.slice(0, 5),
+      missingCaptions: missingCaptions.slice(0, 5),
+      warnings: [
+        autoplayWithoutMuted.length > 0 && `${autoplayWithoutMuted.length} video(s) autoplay without muted attribute — browser may block + WCAG 1.4.2`,
+        missingCaptions.length > 0      && `${missingCaptions.length} video(s) missing captions track (WCAG 1.2.2)`,
+      ].filter(Boolean),
+    };
+  });
+}
+
+async function runColorOnlyAudit(page) {
+  return page.evaluate(() => {
+    const links = [...document.querySelectorAll('a[href]')].filter(a => {
+      const parent = a.parentElement;
+      if (!parent) return false;
+      const r = a.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) return false;
+      const text = a.textContent.trim();
+      return text.length > 0 && parent.textContent.replace(text, '').trim().length > 0;
+    }).slice(0, 30);
+    const colorOnly = links.filter(a => {
+      const s = window.getComputedStyle(a);
+      const ps = window.getComputedStyle(a.parentElement);
+      const hasUnderline = s.textDecorationLine !== 'none' && s.textDecorationLine !== '';
+      const hasDiffWeight = s.fontWeight !== ps.fontWeight;
+      const hasBorder     = s.borderBottomWidth !== '0px' && s.borderBottomStyle !== 'none';
+      const hasDiffBg     = s.backgroundColor !== 'rgba(0, 0, 0, 0)' && s.backgroundColor !== ps.backgroundColor;
+      return !hasUnderline && !hasDiffWeight && !hasBorder && !hasDiffBg;
+    }).slice(0, 10).map(a => ({
+      text:       a.textContent.trim().slice(0, 60),
+      href:       a.getAttribute('href') || '',
+      color:      window.getComputedStyle(a).color,
+      decoration: window.getComputedStyle(a).textDecorationLine,
+    }));
+    return {
+      colorOnlyLinks: colorOnly,
+      warnings: colorOnly.length > 0
+        ? [`${colorOnly.length} inline link(s) distinguished from surrounding text only by color (WCAG 1.4.1)`]
+        : [],
+    };
+  });
+}
+
+async function runTextSelectabilityAudit(page) {
+  return page.evaluate(() => {
+    const SEL = 'p, pre, code, address, [class*="address"], [class*="phone"], [class*="email"]';
+    const nonSelectable = [...document.querySelectorAll(SEL)]
+      .filter(el => {
+        const r = el.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) return false;
+        return el.textContent.trim().length > 20 && window.getComputedStyle(el).userSelect === 'none';
+      }).slice(0, 10).map(el => ({
+        tag:   el.tagName.toLowerCase(),
+        text:  el.textContent.trim().slice(0, 60),
+        class: (el.className || '').trim().split(/\s+/)[0] || null,
+      }));
+    return {
+      count: nonSelectable.length,
+      elements: nonSelectable,
+      warnings: nonSelectable.length > 0
+        ? [`${nonSelectable.length} text element(s) with user-select:none — users cannot copy this content`]
+        : [],
     };
   });
 }
@@ -977,6 +1188,91 @@ async function runStateContrastAudit(page) {
   };
 }
 
+async function runRequiredFieldsAudit(page) {
+  return page.evaluate(() => {
+    const required = [...document.querySelectorAll('input[required], select[required], textarea[required]')];
+    const missingAriaRequired = required
+      .filter(el => el.getAttribute('aria-required') !== 'true')
+      .slice(0, 10).map(el => ({
+        type:  el.type || el.tagName.toLowerCase(),
+        name:  el.name || el.id || null,
+        label: el.getAttribute('aria-label') || null,
+      }));
+    return {
+      count: required.length,
+      missingAriaRequired,
+      warnings: missingAriaRequired.length > 0
+        ? [`${missingAriaRequired.length} required field(s) missing aria-required="true"`]
+        : [],
+    };
+  });
+}
+
+async function runMissingFillModeAudit(page) {
+  return page.evaluate(() => {
+    const missingFillMode = [];
+    for (const sheet of document.styleSheets) {
+      try {
+        for (const rule of sheet.cssRules) {
+          if (rule instanceof CSSStyleRule) {
+            const animName = rule.style.getPropertyValue('animation-name');
+            if (!animName || animName === 'none') continue;
+            const iterCount = rule.style.getPropertyValue('animation-iteration-count');
+            if (iterCount === 'infinite') continue;
+            const fillMode = rule.style.getPropertyValue('animation-fill-mode');
+            if (!fillMode || fillMode === 'none' || fillMode === 'backwards') {
+              missingFillMode.push({
+                selector:      (rule.selectorText || '').slice(0, 80),
+                animationName: animName.slice(0, 40),
+                fillMode:      fillMode || '(not set)',
+              });
+            }
+          }
+        }
+      } catch {}
+    }
+    const unique = [...new Map(missingFillMode.map(x => [x.selector, x])).values()].slice(0, 10);
+    return {
+      missingFillMode: unique,
+      warnings: unique.length > 0
+        ? [`${unique.length} animation(s) missing fill-mode:forwards/both — element snaps back after animation ends`]
+        : [],
+    };
+  });
+}
+
+async function runEmptyStatesAudit(page) {
+  return page.evaluate(() => {
+    const spinners = [...document.querySelectorAll('[class*="spin"], [class*="loading"], [class*="skeleton"], [role="progressbar"]')]
+      .filter(el => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 && window.getComputedStyle(el).display !== 'none';
+      }).slice(0, 5).map(el => ({
+        tag:   el.tagName.toLowerCase(),
+        class: (el.className || '').toString().trim().split(/\s+/)[0] || null,
+        role:  el.getAttribute('role') || null,
+      }));
+    const emptyContainers = [...document.querySelectorAll('ul, ol, tbody, [role="list"], [role="grid"]')]
+      .filter(el => {
+        const r = el.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) return false;
+        return [...el.children].filter(c => window.getComputedStyle(c).display !== 'none').length === 0;
+      }).slice(0, 5).map(el => ({
+        tag:   el.tagName.toLowerCase(),
+        class: (el.className || '').trim().split(/\s+/)[0] || null,
+        role:  el.getAttribute('role') || null,
+      }));
+    return {
+      spinners,
+      emptyContainers,
+      warnings: [
+        spinners.length > 0        && `${spinners.length} loading indicator(s) still visible after page load — may be stuck`,
+        emptyContainers.length > 0 && `${emptyContainers.length} list/grid container(s) with no items — add an empty-state message`,
+      ].filter(Boolean),
+    };
+  });
+}
+
 // ── Route discovery helpers ───────────────────────────────────────────────────
 async function discoverByLinks(page, baseUrl) {
   const links = await page.$$eval('a[href]', (anchors, base) => {
@@ -1014,7 +1310,7 @@ async function runFullAudit(page, outPath, outBase, browser) {
   const [
     meta, images, scripts, touchTargets, headings, domA11y, layout, bundle, fonts,
     typography, interactiveStates, cursor, viewportUnits, mediaQuerySupport, formUX,
-    animationDurations, stacking,
+    animationDurations, stacking, svgA11y, mediaA11y, colorOnly, textSelectability,
   ] = await Promise.all([
     runMetaAudit(page),
     runImageAudit(page),
@@ -1033,6 +1329,10 @@ async function runFullAudit(page, outPath, outBase, browser) {
     runFormUXAudit(page),
     runAnimationDurationAudit(page),
     runStackingAudit(page),
+    runSVGAudit(page),
+    runMediaAudit(page),
+    runColorOnlyAudit(page),
+    runTextSelectabilityAudit(page),
   ]);
 
   let darkMode_, darkModeA11y_;
@@ -1061,6 +1361,18 @@ async function runFullAudit(page, outPath, outBase, browser) {
   let stateContrastResult;
   if (stateContrast) stateContrastResult = await runStateContrastAudit(page);
 
+  let requiredFieldsResult;
+  if (requiredFieldsMode) requiredFieldsResult = await runRequiredFieldsAudit(page);
+
+  if (animFillMode) {
+    const fillResult = await runMissingFillModeAudit(page);
+    animationDurations.missingFillMode = fillResult.missingFillMode;
+    if (fillResult.warnings.length) animationDurations.warnings.push(...fillResult.warnings);
+  }
+
+  let emptyStatesResult;
+  if (emptyStatesMode) emptyStatesResult = await runEmptyStatesAudit(page);
+
   // text-spacing must run last (injects CSS that permanently alters the page)
   let textSpacing;
   if (textSpacingMode) textSpacing = await captureTextSpacing(page, outBase);
@@ -1068,17 +1380,19 @@ async function runFullAudit(page, outPath, outBase, browser) {
   return {
     meta, images, scripts, touchTargets, headings, domA11y, layout, bundle, fonts,
     typography, interactiveStates, cursor, viewportUnits, mediaQuerySupport, formUX,
-    animationDurations, stacking,
-    ...(darkMode_          && { darkMode: darkMode_ }),
-    ...(darkModeA11y_      && { darkModeA11y: darkModeA11y_ }),
-    ...(reducedMotion_     && { reducedMotion: reducedMotion_ }),
-    ...(forcedColors_      && { forcedColors: forcedColors_ }),
-    ...(print_             && { print: print_ }),
-    ...(linkCheck          && { linkCheck }),
-    ...(reflow             && { reflow }),
+    animationDurations, stacking, svgA11y, mediaA11y, colorOnly, textSelectability,
+    ...(darkMode_             && { darkMode: darkMode_ }),
+    ...(darkModeA11y_         && { darkModeA11y: darkModeA11y_ }),
+    ...(reducedMotion_        && { reducedMotion: reducedMotion_ }),
+    ...(forcedColors_         && { forcedColors: forcedColors_ }),
+    ...(print_                && { print: print_ }),
+    ...(linkCheck             && { linkCheck }),
+    ...(reflow                && { reflow }),
     ...(paintComplexityResult && { paintComplexity: paintComplexityResult }),
     ...(stateContrastResult   && { stateContrast: stateContrastResult }),
-    ...(textSpacing        && { textSpacing }),
+    ...(requiredFieldsResult  && { requiredFields: requiredFieldsResult }),
+    ...(emptyStatesResult     && { emptyStates: emptyStatesResult }),
+    ...(textSpacing           && { textSpacing }),
   };
 }
 
