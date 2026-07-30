@@ -3,13 +3,17 @@
 // Single-page (backward-compat):
 //   node pw-e2e-test.js <url> <out.png> [width] [height] [flags]
 //   → stdout: JSON object { ok, url, out, width, height, consoleErrors, a11y,
-//                           meta, images, bundle, fonts, securityHeaders,
-//                           [advanced], [css], [cwv], [darkMode], [diff], [harPath] }
+//                           meta, images, scripts, touchTargets, bundle, fonts,
+//                           securityHeaders, [redirects], [advanced], [css], [cwv],
+//                           [darkMode], [darkModeA11y], [diff], [harPath],
+//                           [reducedMotion], [forcedColors], [print], [noJs],
+//                           [focusAudit] }
 //
 // Multi-page:
 //   node pw-e2e-test.js <url> <out-prefix> [width] [height] --routes=auto|/r1,/r2 [--nav=link-crawl|tab-click]
-//   → stdout: JSON array  [{ ok, url, route, out, ..., meta, images, bundle, fonts,
-//                            securityHeaders, [advanced], [css], [cwv], [darkMode] }, ...]
+//   → stdout: JSON array  [{ ok, url, route, out, ..., meta, images, scripts,
+//                            touchTargets, bundle, fonts, securityHeaders, [redirects],
+//                            [advanced], [css], [cwv], [darkMode], [darkModeA11y] }, ...]
 //
 // Navigation flags:
 //   --routes=auto        Discover routes automatically (uses --nav strategy)
@@ -25,19 +29,26 @@
 //   --video              Record a 3-second WebM video of the page load
 //
 // Extended check flags (single-page + link-crawl multi-page):
-//   --dark-mode          Extra screenshot with prefers-color-scheme: dark emulated
+//   --dark-mode          Extra screenshot + axe-core run with prefers-color-scheme: dark
 //   --css-coverage       CSS coverage report (unused % per stylesheet)
 //   --har                Record network activity as HAR file (<outBase>.har)
-//   --cwv                Core Web Vitals via PerformanceObserver (LCP, CLS, FCP, TTFB)
-//   --compare=<path>     Pixel-diff current screenshot vs baseline PNG
-//                        (creates baseline automatically on first run)
+//   --cwv                Core Web Vitals (LCP, CLS+sources, FCP, TTFB, TBT via PerformanceObserver)
+//   --compare=<path>     Pixel-diff current screenshot vs baseline PNG (creates baseline on first run)
+//   --reduced-motion     Extra screenshot with prefers-reduced-motion: reduce
+//   --forced-colors      Extra screenshot with forced-colors: active (Windows High Contrast)
+//   --print              Extra screenshot with media: print emulated (print stylesheet)
+//   --no-js              Extra screenshot with JavaScript disabled (progressive enhancement check)
+//   --focus-audit        Tab through focusable elements; flag missing visible focus rings
 //
 // Always-on for real URLs (zero-overhead additions to JSON output):
-//   meta            OpenGraph / SEO meta tag audit with issue list
-//   images          Image quality (broken, oversized, missing alt, legacy formats)
+//   meta            OpenGraph/SEO meta audit + JSON-LD structured data + viewport zoom check
+//   images          Image quality (broken, oversized, missing alt, legacy formats, lazy-above-fold)
+//   scripts         Third-party script audit (SRI, async/defer, known trackers)
+//   touchTargets    WCAG 2.5.8 touch target size (interactive elements < 24px)
 //   bundle          Resource size summary (JS/CSS/img KB via Performance API)
 //   fonts           Font loading status + font-display FOUT/FOIT risk
 //   securityHeaders HTTP security header presence (CSP, HSTS, X-Frame-Options, etc.)
+//   redirects       Redirect chain (if any 3xx responses detected during navigation)
 //
 // Auto-escalation when --detect-advanced is set:
 //   CSS animations / GSAP / Framer / Lottie / SVG animate  → enables --animated + --scroll
@@ -78,22 +89,40 @@ const forceScroll= flags['scroll']          === 'true';
 const forceVideo = flags['video']           === 'true';
 const anyAdvFlag = detectAdv || forceAnim || forceHover || forceScroll || forceVideo;
 
-const darkMode    = flags['dark-mode']    === 'true';
-const cssCoverage = flags['css-coverage'] === 'true';
-const harCapture  = flags['har']          === 'true';
-const cwvMode     = flags['cwv']          === 'true';
-const comparePath = flags['compare']      || null;
+const darkMode     = flags['dark-mode']      === 'true';
+const cssCoverage  = flags['css-coverage']   === 'true';
+const harCapture   = flags['har']            === 'true';
+const cwvMode      = flags['cwv']            === 'true';
+const comparePath  = flags['compare']        || null;
+const reducedMotion= flags['reduced-motion'] === 'true';
+const forcedColors = flags['forced-colors']  === 'true';
+const printLayout  = flags['print']          === 'true';
+const noJsMode     = flags['no-js']          === 'true';
+const focusAudit   = flags['focus-audit']    === 'true';
 
-// ── Response tracking (security headers + image formats) ──────────────────────
+// ── Response tracking (security headers + image formats + redirect chain) ─────
 function setupResponseTracking(page) {
   const securityHeaders = {};
   const imageFormats    = {};
+  const redirectChain   = [];
   let secCaptured = false;
 
   page.on('response', response => {
     try {
+      const status  = response.status();
       const headers = response.headers();
-      if (!secCaptured && response.request().resourceType() === 'document' && response.status() < 400) {
+
+      // Redirect chain
+      if ([301, 302, 303, 307, 308].includes(status)) {
+        redirectChain.push({
+          from:     response.url(),
+          status,
+          to:       headers['location'] || null,
+        });
+      }
+
+      // Security headers (from first document response)
+      if (!secCaptured && response.request().resourceType() === 'document' && status < 400) {
         securityHeaders.csp              = headers['content-security-policy']   ?? null;
         securityHeaders.hsts             = headers['strict-transport-security'] ?? null;
         securityHeaders.xFrameOptions    = headers['x-frame-options']           ?? null;
@@ -109,6 +138,8 @@ function setupResponseTracking(page) {
         ].filter(Boolean);
         secCaptured = true;
       }
+
+      // Image format tracking
       const ct = headers['content-type'];
       if (ct && ct.startsWith('image/')) {
         imageFormats[response.url()] = ct.split(';')[0].trim();
@@ -119,6 +150,7 @@ function setupResponseTracking(page) {
   return {
     getSecurityHeaders: () => (secCaptured ? securityHeaders : null),
     getImageFormats:    () => imageFormats,
+    getRedirectChain:   () => redirectChain,
   };
 }
 
@@ -161,11 +193,11 @@ async function detectFeatures(page) {
       if (!hasTransitions && s.transitionDuration && s.transitionDuration !== '0s') hasTransitions = true;
       if (hasAnimations && hasTransitions) break;
     }
-    const hasGSAP          = typeof window.gsap   !== 'undefined';
-    const hasThreeJS        = typeof window.THREE  !== 'undefined';
-    const hasMotion         = typeof window.motion !== 'undefined';
-    const hasLottie         = document.querySelectorAll('[class*="lottie"], lottie-player, dotlottie-player').length > 0;
-    const hasSVGAnimations  = document.querySelectorAll('animate, animateTransform, animateMotion').length > 0;
+    const hasGSAP         = typeof window.gsap   !== 'undefined';
+    const hasThreeJS      = typeof window.THREE  !== 'undefined';
+    const hasMotion       = typeof window.motion !== 'undefined';
+    const hasLottie       = document.querySelectorAll('[class*="lottie"], lottie-player, dotlottie-player').length > 0;
+    const hasSVGAnimations= document.querySelectorAll('animate, animateTransform, animateMotion').length > 0;
     return { hasCanvas, hasWebGL, hasAnimations, hasTransitions,
              hasGSAP, hasThreeJS, hasMotion, hasLottie, hasSVGAnimations };
   });
@@ -297,12 +329,44 @@ async function runMetaAudit(page) {
     const title = document.title;
     const desc  = get('meta[name="description"]');
     const ogImg = get('meta[property="og:image"]');
+
+    // Viewport zoom anti-pattern check
+    const viewportContent = get('meta[name="viewport"]');
+    const blocksZoom = viewportContent ? (
+      viewportContent.includes('user-scalable=no') ||
+      viewportContent.includes('user-scalable=0') ||
+      /maximum-scale=[01][,\s]/.test(viewportContent) ||
+      viewportContent.includes('maximum-scale=1.0')
+    ) : false;
+
+    // JSON-LD structured data extraction
+    const structuredData = [...document.querySelectorAll('script[type="application/ld+json"]')]
+      .map(s => {
+        try { return { type: JSON.parse(s.textContent)['@type'] || 'Unknown', parseError: null }; }
+        catch (e) { return { type: null, parseError: e.message.slice(0, 80) }; }
+      });
+
+    const issues = [
+      !title                                  && 'Missing <title>',
+      title && title.length > 60              && `Title too long (${title.length} chars, max 60)`,
+      title && title.length < 10              && `Title too short (${title.length} chars)`,
+      !desc                                   && 'Missing meta description',
+      desc  && desc.length > 160              && `Description too long (${desc.length} chars, max 160)`,
+      !get('link[rel="canonical"]', 'href')   && 'Missing canonical link',
+      !ogImg                                  && 'Missing og:image',
+      !viewportContent                        && 'Missing viewport meta',
+      !get('meta[property="og:title"]')       && 'Missing og:title',
+      blocksZoom                              && 'Viewport blocks user zoom (WCAG 1.4.4)',
+      structuredData.some(sd => sd.parseError) && 'JSON-LD parse error detected',
+    ].filter(Boolean);
+
     return {
       title,
       description: desc,
       canonical:   get('link[rel="canonical"]', 'href'),
       robots:      get('meta[name="robots"]'),
-      viewport:    get('meta[name="viewport"]'),
+      viewport:    viewportContent,
+      blocksZoom,
       og: {
         title:       get('meta[property="og:title"]'),
         description: get('meta[property="og:description"]'),
@@ -315,55 +379,80 @@ async function runMetaAudit(page) {
         image: get('meta[name="twitter:image"]'),
         title: get('meta[name="twitter:title"]'),
       },
-      issues: [
-        !title                                  && 'Missing <title>',
-        title && title.length > 60              && `Title too long (${title.length} chars, max 60)`,
-        title && title.length < 10              && `Title too short (${title.length} chars)`,
-        !desc                                   && 'Missing meta description',
-        desc  && desc.length > 160              && `Description too long (${desc.length} chars, max 160)`,
-        !get('link[rel="canonical"]', 'href')   && 'Missing canonical link',
-        !ogImg                                  && 'Missing og:image',
-        !get('meta[name="viewport"]')           && 'Missing viewport meta',
-        !get('meta[property="og:title"]')       && 'Missing og:title',
-      ].filter(Boolean),
+      structuredData: {
+        count:      structuredData.length,
+        types:      structuredData.filter(sd => sd.type).map(sd => sd.type),
+        parseErrors: structuredData.filter(sd => sd.parseError).map(sd => sd.parseError),
+      },
+      issues,
     };
   });
 }
 
 async function runImageAudit(page, imageFormats) {
-  const imgData = await page.evaluate(() =>
-    [...document.querySelectorAll('img')].map(img => ({
-      src:        img.currentSrc || img.src || '',
-      missingAlt: img.alt === '' && img.getAttribute('role') !== 'presentation' && img.getAttribute('aria-hidden') !== 'true',
-      broken:     img.complete && img.naturalWidth === 0 && img.src !== '',
-      naturalW:   img.naturalWidth,
-      naturalH:   img.naturalHeight,
-      displayW:   img.clientWidth,
-      displayH:   img.clientHeight,
-      oversized:  img.naturalWidth > img.clientWidth * 2 && img.clientWidth > 0 && img.naturalWidth > 200,
-      lazy:       img.loading === 'lazy',
-    }))
-  );
+  const imgData = await page.evaluate(() => {
+    const vh = window.innerHeight;
+    return [...document.querySelectorAll('img')].map(img => {
+      const rect = img.getBoundingClientRect();
+      const isAboveFold = rect.bottom <= vh && rect.top >= 0 && rect.width > 0;
+      const isBelowFold = rect.top > vh;
+      const hasLazy     = img.loading === 'lazy';
+      const hasFP       = img.getAttribute('fetchpriority') === 'high';
+
+      let foldIssue = null;
+      if (isAboveFold && hasLazy)   foldIssue = 'LAZY_ABOVE_FOLD';    // hurts LCP
+      else if (isBelowFold && !hasLazy) foldIssue = 'MISSING_LAZY';   // wastes bandwidth
+
+      const isHeroCandidate = isAboveFold && img.clientWidth > 300 && !hasFP && !hasLazy;
+
+      return {
+        src:        img.currentSrc || img.src || '',
+        missingAlt: img.alt === '' && img.getAttribute('role') !== 'presentation' && img.getAttribute('aria-hidden') !== 'true',
+        broken:     img.complete && img.naturalWidth === 0 && img.src !== '',
+        naturalW:   img.naturalWidth,
+        naturalH:   img.naturalHeight,
+        displayW:   img.clientWidth,
+        displayH:   img.clientHeight,
+        oversized:  img.naturalWidth > img.clientWidth * 2 && img.clientWidth > 0 && img.naturalWidth > 200,
+        lazy:       hasLazy,
+        foldIssue,
+        isHeroCandidate,
+      };
+    });
+  });
+
   const legacyFormats = Object.entries(imageFormats)
     .filter(([, ct]) => ct === 'image/jpeg' || ct === 'image/png')
     .map(([u]) => u.split('/').pop().split('?')[0]);
 
+  const lazyAboveFold = imgData.filter(i => i.foldIssue === 'LAZY_ABOVE_FOLD');
+  const missingLazy   = imgData.filter(i => i.foldIssue === 'MISSING_LAZY');
+  const heroCandidates= imgData.filter(i => i.isHeroCandidate);
+
   return {
-    total:         imgData.length,
-    broken:        imgData.filter(i => i.broken).length,
-    missingAlt:    imgData.filter(i => i.missingAlt).length,
-    oversized:     imgData.filter(i => i.oversized).length,
-    notLazy:       imgData.filter(i => !i.lazy && i.displayW > 100).length,
-    legacyFormats: legacyFormats.length,
+    total:           imgData.length,
+    broken:          imgData.filter(i => i.broken).length,
+    missingAlt:      imgData.filter(i => i.missingAlt).length,
+    oversized:       imgData.filter(i => i.oversized).length,
+    notLazy:         imgData.filter(i => !i.lazy && i.displayW > 100).length,
+    legacyFormats:   legacyFormats.length,
+    lazyAboveFold:   lazyAboveFold.length,
+    missingFetchPriority: heroCandidates.length,
     details: {
-      broken:     imgData.filter(i => i.broken).map(i => i.src),
-      missingAlt: imgData.filter(i => i.missingAlt).map(i => i.src || '(no src)'),
-      oversized:  imgData.filter(i => i.oversized).map(i => ({
+      broken:          imgData.filter(i => i.broken).map(i => i.src),
+      missingAlt:      imgData.filter(i => i.missingAlt).map(i => i.src || '(no src)'),
+      oversized:       imgData.filter(i => i.oversized).map(i => ({
         src:     i.src,
         natural: `${i.naturalW}×${i.naturalH}`,
         display: `${i.displayW}×${i.displayH}`,
       })),
+      lazyAboveFold:   lazyAboveFold.map(i => i.src),
+      heroMissingFP:   heroCandidates.map(i => i.src),
     },
+    warnings: [
+      lazyAboveFold.length > 0   && `${lazyAboveFold.length} above-fold image(s) marked lazy — hurts LCP`,
+      heroCandidates.length > 0  && `${heroCandidates.length} large above-fold image(s) missing fetchpriority="high"`,
+    ].filter(Boolean),
   };
 }
 
@@ -414,7 +503,7 @@ async function runFontAudit(page) {
             });
           }
         }
-      } catch {} // cross-origin stylesheet throws SecurityError
+      } catch {} // cross-origin stylesheet
     }
     return {
       loaded:   fontFaces.filter(f => f.status === 'loaded').length,
@@ -422,6 +511,85 @@ async function runFontAudit(page) {
       foitRisk: fontFaceRules.filter(f => f.display === 'auto' || f.display === 'block').map(f => f.family),
       foutRisk: fontFaceRules.filter(f => f.display === 'swap').map(f => f.family),
       optimal:  fontFaceRules.filter(f => f.display === 'optional' || f.display === 'fallback').map(f => f.family),
+    };
+  });
+}
+
+async function runScriptAudit(page) {
+  return page.evaluate(() => {
+    const pageOrigin = location.origin;
+    const TRACKERS = {
+      'google-analytics.com':  'Google Analytics',
+      'googletagmanager.com':  'Google Tag Manager',
+      'connect.facebook.net':  'Facebook Pixel',
+      'static.hotjar.com':     'Hotjar',
+      'widget.intercom.io':    'Intercom',
+      'cdn.segment.com':       'Segment',
+      'js.stripe.com':         'Stripe',
+      'snap.licdn.com':        'LinkedIn Insight',
+      'platform.twitter.com':  'Twitter Widget',
+      'script.crazyegg.com':   'Crazy Egg',
+    };
+
+    const scripts = [...document.querySelectorAll('script[src]')].map(s => {
+      let origin;
+      try { origin = new URL(s.src).origin; } catch { return null; }
+      const isThirdParty = origin !== pageOrigin;
+      const tracker = Object.entries(TRACKERS).find(([k]) => s.src.includes(k));
+      return {
+        src:         s.src.slice(0, 100),
+        origin,
+        isThirdParty,
+        trackerName: tracker?.[1] || null,
+        hasSRI:      !!s.integrity,
+        isAsync:     s.async,
+        isDefer:     s.defer,
+        isModule:    s.type === 'module',
+      };
+    }).filter(Boolean);
+
+    const thirdParty      = scripts.filter(s => s.isThirdParty);
+    const missingSRI      = thirdParty.filter(s => !s.hasSRI);
+    const renderBlocking  = thirdParty.filter(s => !s.isAsync && !s.isDefer && !s.isModule);
+    const trackers        = thirdParty.filter(s => s.trackerName).map(s => s.trackerName);
+
+    return {
+      total:            scripts.length,
+      thirdPartyCount:  thirdParty.length,
+      missingSRI:       missingSRI.length,
+      renderBlocking:   renderBlocking.length,
+      trackers:         [...new Set(trackers)],
+      warnings: [
+        missingSRI.length     > 0 && `${missingSRI.length} third-party script(s) missing SRI hash`,
+        renderBlocking.length > 0 && `${renderBlocking.length} render-blocking third-party script(s)`,
+      ].filter(Boolean),
+      details: thirdParty.slice(0, 10),
+    };
+  });
+}
+
+async function runTouchTargetAudit(page) {
+  return page.evaluate(() => {
+    const MIN_AA = 24;  // WCAG 2.5.8 AA (WCAG 2.2)
+    const SEL    = 'a[href], button, input, select, textarea, [role="button"], [role="link"], [role="checkbox"], [role="menuitem"], [role="tab"]';
+    const failing = [...document.querySelectorAll(SEL)].map(el => {
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) return null;
+      if (window.getComputedStyle(el).display === 'none') return null;
+      const failsAA = r.width < MIN_AA || r.height < MIN_AA;
+      if (!failsAA) return null;
+      return {
+        tag:    el.tagName,
+        text:   (el.textContent || el.getAttribute('aria-label') || '').trim().slice(0, 40),
+        width:  Math.round(r.width),
+        height: Math.round(r.height),
+      };
+    }).filter(Boolean);
+
+    return {
+      failingAA: failing.length,
+      details:   failing.slice(0, 10),
+      warnings:  failing.length > 0 ? [`${failing.length} interactive element(s) below 24×24px (WCAG 2.5.8)`] : [],
     };
   });
 }
@@ -454,6 +622,51 @@ async function getCSSCoverage(page) {
   };
 }
 
+// Installs CWV, CLS-source, and long-task observers before navigation
+async function installCWVObserver(page) {
+  await page.addInitScript(() => {
+    window.__vitals = { cls: 0, shifts: [], longTasks: [] };
+    try {
+      new PerformanceObserver(list => {
+        for (const e of list.getEntries()) {
+          if (e.hadRecentInput) continue;
+          window.__vitals.cls += e.value;
+          if (e.sources) {
+            for (const src of e.sources) {
+              if (src.node) {
+                try {
+                  window.__vitals.shifts.push({
+                    value:     parseFloat(e.value.toFixed(4)),
+                    startTime: Math.round(e.startTime),
+                    element:   {
+                      tag:      src.node.tagName,
+                      id:       src.node.id || null,
+                      class:    (src.node.className || '').split(' ').filter(Boolean)[0] || null,
+                      prevRect: src.previousRect
+                        ? { x: Math.round(src.previousRect.x), y: Math.round(src.previousRect.y), w: Math.round(src.previousRect.width), h: Math.round(src.previousRect.height) }
+                        : null,
+                      currRect: src.currentRect
+                        ? { x: Math.round(src.currentRect.x),  y: Math.round(src.currentRect.y),  w: Math.round(src.currentRect.width),  h: Math.round(src.currentRect.height)  }
+                        : null,
+                    },
+                  });
+                } catch {}
+              }
+            }
+          }
+        }
+      }).observe({ type: 'layout-shift', buffered: true });
+    } catch {}
+    try {
+      new PerformanceObserver(list => {
+        list.getEntries().forEach(e =>
+          window.__vitals.longTasks.push({ duration: Math.round(e.duration), startTime: Math.round(e.startTime) })
+        );
+      }).observe({ type: 'longtask', buffered: true });
+    } catch {}
+  });
+}
+
 async function runCWV(page) {
   try {
     await page.waitForTimeout(2000);
@@ -465,16 +678,22 @@ async function runCWV(page) {
       const lcp    = lcpEnt.length ? lcpEnt[lcpEnt.length - 1].startTime : null;
       const cls    = window.__vitals?.cls ?? null;
       const ttfb   = nav.responseStart ? Math.round(nav.responseStart) : null;
+      const shifts = window.__vitals?.shifts || [];
+      const tasks  = window.__vitals?.longTasks || [];
+      const tbt    = Math.round(tasks.reduce((s, t) => s + Math.max(0, t.duration - 50), 0));
       const rate   = (v, g, ni) => v == null ? null : v <= g ? 'good' : v <= ni ? 'needs-improvement' : 'poor';
       return {
         lcp:  lcp  != null ? Math.round(lcp)            : null,
         cls:  cls  != null ? parseFloat(cls.toFixed(4)) : null,
         fcp:  fcp  != null ? Math.round(fcp)            : null,
-        ttfb,
+        ttfb, tbt,
+        clsSources: shifts.sort((a, b) => b.value - a.value).slice(0, 5),
+        longTasks:  tasks.sort((a, b) => b.duration - a.duration).slice(0, 5),
         ratings: {
           lcp: rate(lcp, 2500, 4000),
           cls: rate(cls, 0.1,  0.25),
           fcp: rate(fcp, 1800, 3000),
+          tbt: rate(tbt, 200,  600),
         },
       };
     });
@@ -483,13 +702,118 @@ async function runCWV(page) {
   }
 }
 
-async function captureDarkMode(page, outPath) {
+// Dark mode screenshot; optionally keep dark emulation active for further checks
+async function captureDarkMode(page, outPath, keepEmulation = false) {
   const darkPath = outPath.replace(/\.png$/i, '') + '-dark.png';
   await page.emulateMedia({ colorScheme: 'dark' });
   await page.waitForTimeout(200);
   await page.screenshot({ path: darkPath, fullPage: false });
-  await page.emulateMedia({ colorScheme: 'light' });
+  if (!keepEmulation) await page.emulateMedia({ colorScheme: 'light' });
   return darkPath;
+}
+
+// Reduced motion screenshot
+async function captureReducedMotion(page, outPath) {
+  const rmPath = outPath.replace(/\.png$/i, '') + '-reduced-motion.png';
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.waitForTimeout(200);
+  await page.screenshot({ path: rmPath, fullPage: false });
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  return rmPath;
+}
+
+// Forced colors / Windows High Contrast screenshot
+async function captureForcedColors(page, outPath) {
+  const fcPath = outPath.replace(/\.png$/i, '') + '-forced-colors.png';
+  await page.emulateMedia({ forcedColors: 'active' });
+  await page.waitForTimeout(200);
+  await page.screenshot({ path: fcPath, fullPage: false });
+  await page.emulateMedia({ forcedColors: 'none' });
+  return fcPath;
+}
+
+// Print layout screenshot
+async function capturePrintLayout(page, outPath) {
+  const printPath = outPath.replace(/\.png$/i, '') + '-print.png';
+  await page.emulateMedia({ media: 'print' });
+  await page.waitForTimeout(200);
+  await page.screenshot({ path: printPath, fullPage: true });
+  await page.emulateMedia({ media: 'screen' });
+  return printPath;
+}
+
+// Progressive enhancement: screenshot with JS disabled (new context, single-page only)
+async function captureNoJS(browser, pageUrl, outBase, w, h) {
+  const noJsContext = await browser.newContext({ javaScriptEnabled: false });
+  const noJsPage    = await noJsContext.newPage();
+  await noJsPage.setViewportSize({ width: w, height: h });
+  try {
+    await noJsPage.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    const noJsPath     = outBase + '-no-js.png';
+    await noJsPage.screenshot({ path: noJsPath, fullPage: false });
+    const contentLength = await noJsPage.evaluate(() => document.body.innerText.trim().length);
+    const hasContent    = contentLength > 100;
+    return {
+      out: noJsPath,
+      contentLength,
+      hasContent,
+      warning: !hasContent ? 'Page has < 100 chars of text without JS — likely a blank SPA with no SSR' : null,
+    };
+  } catch (e) {
+    return { error: e.message };
+  } finally {
+    await noJsContext.close();
+  }
+}
+
+// Keyboard focus ring audit: Tab through up to 20 focusable elements
+async function runFocusAuditFn(page, outBase) {
+  const focusableCount = await page.evaluate(() =>
+    document.querySelectorAll(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    ).length
+  );
+  const maxTabs = Math.min(focusableCount, 20);
+  const focusResults = [];
+  await page.evaluate(() => { try { document.activeElement?.blur(); } catch {} });
+
+  for (let i = 0; i < maxTabs; i++) {
+    await page.keyboard.press('Tab');
+    const focused = await page.evaluate(() => {
+      const el = document.activeElement;
+      if (!el || el === document.body || el === document.documentElement) return null;
+      const style = window.getComputedStyle(el);
+      const rect  = el.getBoundingClientRect();
+      return {
+        tag:             el.tagName,
+        id:              el.id || null,
+        text:            (el.textContent || el.getAttribute('aria-label') || '').trim().slice(0, 40),
+        outlineStyle:    style.outlineStyle,
+        outlineWidth:    style.outlineWidth,
+        hasVisibleFocus: style.outlineStyle !== 'none' && style.outlineWidth !== '0px',
+        rect:            { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) },
+      };
+    });
+    if (focused) {
+      if (!focused.hasVisibleFocus) {
+        try {
+          const ssPath = `${outBase}-focus-${i}.png`;
+          await page.screenshot({ path: ssPath, fullPage: false });
+          focused.screenshot = ssPath;
+        } catch {}
+      }
+      focusResults.push(focused);
+    }
+  }
+
+  const missing = focusResults.filter(f => !f.hasVisibleFocus);
+  return {
+    tabStopsTested:  focusResults.length,
+    missingFocusRing: missing.length,
+    focusRingPct:    focusResults.length > 0 ? Math.round((1 - missing.length / focusResults.length) * 100) : 100,
+    warnings:        missing.length > 0 ? [`${missing.length}/${focusResults.length} focusable elements have no visible focus ring (WCAG 2.4.7)`] : [],
+    details:         focusResults,
+  };
 }
 
 async function compareScreenshots(currentPath, baselinePath) {
@@ -515,20 +839,6 @@ async function compareScreenshots(currentPath, baselinePath) {
     }
     return { ok: false, error: e.message };
   }
-}
-
-// ── CWV init script (registered before page navigation) ───────────────────────
-async function installCWVObserver(page) {
-  await page.addInitScript(() => {
-    window.__vitals = { cls: 0 };
-    try {
-      new PerformanceObserver(list => {
-        for (const e of list.getEntries()) {
-          if (!e.hadRecentInput) window.__vitals.cls += e.value;
-        }
-      }).observe({ type: 'layout-shift', buffered: true });
-    } catch {}
-  });
 }
 
 // ── Route discovery helpers ───────────────────────────────────────────────────
@@ -575,6 +885,58 @@ function routeSlug(route) {
     : route.replace(/^\//, '').replace(/[^a-zA-Z0-9]/g, '-').slice(0, 40);
 }
 
+// ── Shared full-page audit (used by both singlePage and pageChecks) ────────────
+async function runFullAudit(page, outPath, outBase, tracker, isFirstPage = false) {
+  const [meta, images, scripts, touchTargets, bundle, fonts] = await Promise.all([
+    runMetaAudit(page),
+    runImageAudit(page, tracker.getImageFormats()),
+    runScriptAudit(page),
+    runTouchTargetAudit(page),
+    runBundleAudit(page),
+    runFontAudit(page),
+  ]);
+  const securityHeaders = tracker.getSecurityHeaders();
+  const redirectChain   = tracker.getRedirectChain();
+
+  // Dark mode: screenshot + axe
+  let darkMode_, darkModeA11y_;
+  if (darkMode) {
+    const darkOut_ = await captureDarkMode(page, outPath, true); // keep emulation
+    const dmA11y   = await runAxe(page);
+    await page.emulateMedia({ colorScheme: 'light' });
+    darkMode_     = { out: darkOut_ };
+    darkModeA11y_ = dmA11y;
+  }
+
+  // Reduced motion
+  let reducedMotion_;
+  if (reducedMotion) {
+    reducedMotion_ = { out: await captureReducedMotion(page, outPath) };
+  }
+
+  // Forced colors
+  let forcedColors_;
+  if (forcedColors) {
+    forcedColors_ = { out: await captureForcedColors(page, outPath) };
+  }
+
+  // Print layout
+  let print_;
+  if (printLayout) {
+    print_ = { out: await capturePrintLayout(page, outPath) };
+  }
+
+  return {
+    meta, images, scripts, touchTargets, bundle, fonts, securityHeaders,
+    ...(redirectChain.length > 0 && { redirects: redirectChain }),
+    ...(darkMode_     && { darkMode: darkMode_ }),
+    ...(darkModeA11y_ && { darkModeA11y: darkModeA11y_ }),
+    ...(reducedMotion_&& { reducedMotion: reducedMotion_ }),
+    ...(forcedColors_ && { forcedColors: forcedColors_ }),
+    ...(print_        && { print: print_ }),
+  };
+}
+
 // ── Single-page mode ──────────────────────────────────────────────────────────
 async function singlePage() {
   const outBase = outArg.replace(/\.png$/i, '');
@@ -613,9 +975,6 @@ async function singlePage() {
   let css;
   if (cssCoverage) css = await getCSSCoverage(page);
 
-  let darkOut;
-  if (darkMode && url !== 'about:blank') darkOut = await captureDarkMode(page, outArg);
-
   let diff;
   if (comparePath) {
     if (!fs.existsSync(comparePath)) {
@@ -629,43 +988,47 @@ async function singlePage() {
   let a11y = { violations: 0, critical: 0, details: [] };
   if (url !== 'about:blank') a11y = await runAxe(page);
 
-  // Advanced checks — always runs when flags are set (detected = {} on blank pages)
+  // Advanced checks
   let advanced;
   if (anyAdvFlag) {
     const detected = await detectFeatures(page);
     advanced = await runAdvanced(page, outBase, detected);
   }
 
-  // Always-on audits for real URLs
-  let meta, images, bundle, fonts, securityHeaders, cwv;
+  // Always-on audits + flag-gated screenshots (real URLs only)
+  let auditResult = {};
   if (url !== 'about:blank') {
-    [meta, images, bundle, fonts] = await Promise.all([
-      runMetaAudit(page),
-      runImageAudit(page, tracker.getImageFormats()),
-      runBundleAudit(page),
-      runFontAudit(page),
-    ]);
-    securityHeaders = tracker.getSecurityHeaders();
-    if (cwvMode) cwv = await runCWV(page);
+    auditResult = await runFullAudit(page, outArg, outBase, tracker);
+  }
+
+  // CWV (requires 2s settle time — run after other audits)
+  let cwv;
+  if (cwvMode && url !== 'about:blank') cwv = await runCWV(page);
+
+  // No-JS screenshot (single-page only — needs fresh browser context)
+  let noJs;
+  if (noJsMode && url !== 'about:blank') {
+    noJs = await captureNoJS(browser, url, outBase, width, height);
+  }
+
+  // Focus audit (modifies page state — run last)
+  let focusAuditResult;
+  if (focusAudit && url !== 'about:blank') {
+    focusAuditResult = await runFocusAuditFn(page, outBase);
   }
 
   await context.close(); // flushes HAR
   await browser.close();
 
   const result = { ok: true, url, out: outArg, width, height, consoleErrors: errors, a11y };
-  if (url !== 'about:blank') {
-    result.meta            = meta;
-    result.images          = images;
-    result.bundle          = bundle;
-    result.fonts           = fonts;
-    result.securityHeaders = securityHeaders;
-  }
-  if (advanced) result.advanced = advanced;
-  if (css)      result.css      = css;
-  if (cwv)      result.cwv      = cwv;
-  if (darkOut)  result.darkMode = { out: darkOut };
-  if (diff)     result.diff     = diff;
-  if (harPath)  result.harPath  = harPath;
+  Object.assign(result, auditResult);
+  if (advanced)          result.advanced    = advanced;
+  if (css)               result.css         = css;
+  if (cwv)               result.cwv         = cwv;
+  if (diff)              result.diff        = diff;
+  if (harPath)           result.harPath     = harPath;
+  if (noJs)              result.noJs        = noJs;
+  if (focusAuditResult)  result.focusAudit  = focusAuditResult;
 
   process.stdout.write(JSON.stringify(result) + '\n');
 }
@@ -686,9 +1049,6 @@ async function pageChecks(page, pageUrl, outPath, route) {
     let css;
     if (cssCoverage) css = await getCSSCoverage(page);
 
-    let darkOut;
-    if (darkMode) darkOut = await captureDarkMode(page, outPath);
-
     const a11y = await runAxe(page);
     let advanced;
     if (anyAdvFlag) {
@@ -696,24 +1056,22 @@ async function pageChecks(page, pageUrl, outPath, route) {
       advanced = await runAdvanced(page, outPath.replace(/\.png$/i, ''), detected);
     }
 
-    const [meta, images, bundle, fonts] = await Promise.all([
-      runMetaAudit(page),
-      runImageAudit(page, tracker.getImageFormats()),
-      runBundleAudit(page),
-      runFontAudit(page),
-    ]);
-    const securityHeaders = tracker.getSecurityHeaders();
+    const auditResult = await runFullAudit(page, outPath, outPath.replace(/\.png$/i, ''), tracker);
+
     let cwv;
     if (cwvMode) cwv = await runCWV(page);
 
-    const entry = {
-      ok: true, url: pageUrl, route, out: outPath, width, height,
-      consoleErrors: errors, a11y, meta, images, bundle, fonts, securityHeaders,
-    };
-    if (advanced) entry.advanced = advanced;
-    if (css)      entry.css      = css;
-    if (cwv)      entry.cwv      = cwv;
-    if (darkOut)  entry.darkMode = { out: darkOut };
+    let focusAuditResult;
+    if (focusAudit) {
+      focusAuditResult = await runFocusAuditFn(page, outPath.replace(/\.png$/i, ''));
+    }
+
+    const entry = { ok: true, url: pageUrl, route, out: outPath, width, height, consoleErrors: errors, a11y };
+    Object.assign(entry, auditResult);
+    if (advanced)         entry.advanced   = advanced;
+    if (css)              entry.css        = css;
+    if (cwv)              entry.cwv        = cwv;
+    if (focusAuditResult) entry.focusAudit = focusAuditResult;
     return entry;
   } catch (e) {
     return { ok: false, url: pageUrl, route, error: e.message };
@@ -730,7 +1088,7 @@ async function multiPage() {
 
   const browser = await chromium.launch({ headless: true });
 
-  // Shared context with optional HAR (captures all pages in one file)
+  // Shared context with optional HAR
   const contextOpts = {};
   let harPath;
   if (harCapture) {
@@ -750,13 +1108,11 @@ async function multiPage() {
     if (tabs.length === 0) {
       const outPath = `${prefix}-root.png`;
       await page.screenshot({ path: outPath, fullPage: false });
-      const a11y = await runAxe(page);
-      const [meta, images, bundle, fonts] = await Promise.all([
-        runMetaAudit(page), runImageAudit(page, {}), runBundleAudit(page), runFontAudit(page),
-      ]);
+      const a11y       = await runAxe(page);
+      const tracker_   = setupResponseTracking(page);
+      const auditResult= await runFullAudit(page, outPath, outPath.replace(/\.png$/i, ''), tracker_);
       results.push({ ok: true, url, route: '/', out: outPath, width, height,
-                     consoleErrors: [], a11y, meta, images, bundle, fonts,
-                     securityHeaders: null, note: 'no-tabs-found' });
+                     consoleErrors: [], a11y, ...auditResult, note: 'no-tabs-found' });
     } else {
       for (const tab of tabs) {
         const errors = [];
@@ -769,7 +1125,7 @@ async function multiPage() {
             .replace(/\s+/g, '-').replace(/[^a-zA-Z0-9-]/g, '').toLowerCase() || `tab${tab.index}`;
           await els[tab.index].click();
           await page.waitForTimeout(700);
-          const outPath = `${prefix}-tab-${label}.png`;
+          const outPath  = `${prefix}-tab-${label}.png`;
           await page.screenshot({ path: outPath, fullPage: false });
           const a11y = await runAxe(page);
           let advanced;
@@ -777,16 +1133,11 @@ async function multiPage() {
             const detected = await detectFeatures(page);
             advanced = await runAdvanced(page, outPath.replace(/\.png$/i, ''), detected);
           }
-          let darkOut;
-          if (darkMode) darkOut = await captureDarkMode(page, outPath);
-          const [meta, images, bundle, fonts] = await Promise.all([
-            runMetaAudit(page), runImageAudit(page, {}), runBundleAudit(page), runFontAudit(page),
-          ]);
+          const tracker_    = setupResponseTracking(page);
+          const auditResult = await runFullAudit(page, outPath, outPath.replace(/\.png$/i, ''), tracker_);
           const entry = { ok: true, url, route: `tab:${label}`, tab: tab.index,
-                          out: outPath, width, height, consoleErrors: errors, a11y,
-                          meta, images, bundle, fonts, securityHeaders: null };
+                          out: outPath, width, height, consoleErrors: errors, a11y, ...auditResult };
           if (advanced) entry.advanced = advanced;
-          if (darkOut)  entry.darkMode = { out: darkOut };
           results.push(entry);
         } catch (e) {
           results.push({ ok: false, url, route: `tab:${tab.index}`, error: e.message });

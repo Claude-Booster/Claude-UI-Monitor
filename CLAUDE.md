@@ -123,11 +123,16 @@ Report any CSS custom property mismatches as additional issues.
 - **pw-e2e-test.js**: `node ~/.claude/scripts/pw-e2e-test.js <url> <out.png> [width] [height]` — screenshot + axe-core audit + meta/OG, images, bundle, fonts, security headers (always-on). Outputs JSON.
 - **pw-e2e-test.js (multi-page)**: `node ~/.claude/scripts/pw-e2e-test.js <url> <prefix> 1280 800 --routes=auto --nav=link-crawl` — screenshots every route/tab; outputs JSON array.
 - **pw-e2e-test.js (extended flags)**:
-  - `--dark-mode` — extra screenshot with `prefers-color-scheme: dark` emulated
-  - `--css-coverage` — CSS unused-% report per stylesheet (Playwright built-in)
-  - `--har` — save full network HAR file (`<outBase>.har`)
-  - `--cwv` — Core Web Vitals (LCP, CLS, FCP, TTFB) via PerformanceObserver (~5-8s extra)
-  - `--compare=<baseline.png>` — pixel-diff current screenshot vs baseline (creates baseline on first run; needs `pixelmatch`/`pngjs` — installed)
+  - `--dark-mode` — extra screenshot + axe-core run with `prefers-color-scheme: dark` emulated → `darkMode.out` + `darkModeA11y`
+  - `--css-coverage` — CSS unused-% report per stylesheet (Playwright built-in) → `css`
+  - `--har` — save full network HAR file (`<outBase>.har`) → `harPath`
+  - `--cwv` — Core Web Vitals: LCP, CLS+sources, FCP, TTFB, TBT via PerformanceObserver (~5-8s extra) → `cwv`
+  - `--compare=<baseline.png>` — pixel-diff current screenshot vs baseline (creates baseline on first run; needs `pixelmatch`/`pngjs` — installed) → `diff`
+  - `--reduced-motion` — extra screenshot with `prefers-reduced-motion: reduce` (WCAG 2.3.3) → `reducedMotion.out`
+  - `--forced-colors` — extra screenshot with Windows High Contrast Mode (`forced-colors: active`) → `forcedColors.out`
+  - `--print` — extra screenshot with `media: print` emulated (print stylesheet check) → `print.out`
+  - `--no-js` — extra screenshot with JavaScript disabled; flags blank SPAs without SSR → `noJs`
+  - `--focus-audit` — tab through up to 20 focusable elements; flag missing focus rings (WCAG 2.4.7) → `focusAudit`
 - **Figma baseline export**: `node ~/.claude/scripts/figma-baseline.js --file=<key> --nodes=<id1,id2>` — fetch Figma frames as PNG baselines (requires `FIGMA_ACCESS_TOKEN` in `~/.claude/.env`). Use `--list` to see all frames.
 - **Design token check**: `node ~/.claude/scripts/figma-token-check.js <url> --tokens=~/.claude/design-tokens.json` — compare CSS custom properties in live app against a design token JSON file.
 - **Snapshot baselines**: `cd ~/.claude/scripts && npm run snapshots:update` / `npm run snapshots`

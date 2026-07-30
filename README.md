@@ -97,21 +97,29 @@ Every screenshot run (hook or manual) now includes these zero-overhead audits:
 
 | Field | What it reports |
 |---|---|
-| `meta` | OpenGraph tags, SEO meta description, canonical link, viewport — with an `issues[]` list |
-| `images` | Broken images, missing alt text, oversized (natural >> display), non-lazy, legacy formats |
+| `meta` | OpenGraph/SEO audit, canonical, viewport; `issues[]` list; **JSON-LD structured data** (`structuredData.count/types/parseErrors`); **viewport zoom anti-pattern** (`blocksZoom`) |
+| `images` | Broken, missing alt, oversized, legacy formats; **lazy-above-fold** (hurts LCP); **missing `fetchpriority`** on hero images |
+| `scripts` | Third-party scripts: **SRI missing**, **render-blocking**, **known trackers** (GA, GTM, Hotjar, etc.) |
+| `touchTargets` | Interactive elements below **24×24px** (WCAG 2.5.8 AA) — `failingAA` count + element details |
 | `bundle` | JS / CSS / image KB from the Performance API, largest 3 resources, slowest 3 resources |
 | `fonts` | Loaded/failed fonts, FOIT risk (`font-display: auto/block`), FOUT risk (`swap`) |
 | `securityHeaders` | CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy — lists missing headers |
+| `redirects` | **Redirect chain** detected during navigation (3xx) — only present when redirects occur |
 
 **Optional flag-gated checks:**
 
 | Flag | What it adds | Overhead |
 |---|---|---|
-| `--dark-mode` | Extra screenshot with `prefers-color-scheme: dark` | ~200ms |
-| `--css-coverage` | Unused CSS % per stylesheet (Playwright built-in) | ~0ms |
-| `--har` | Full network HAR file (`<outBase>.har`) for waterfall analysis | ~0ms |
-| `--cwv` | Core Web Vitals: LCP / CLS / FCP / TTFB with good/needs-improvement/poor ratings | ~5-8s |
+| `--dark-mode` | Extra screenshot + **axe-core run** with `prefers-color-scheme: dark` → `darkMode.out` + `darkModeA11y` | ~300ms |
+| `--css-coverage` | Unused CSS % per stylesheet (Playwright built-in) → `css` | ~0ms |
+| `--har` | Full network HAR file (`<outBase>.har`) for waterfall analysis → `harPath` | ~0ms |
+| `--cwv` | Core Web Vitals: LCP / **CLS+sources** / FCP / TTFB / **TBT** with ratings | ~5-8s |
 | `--compare=<path>` | Pixel-diff vs baseline PNG; diff PNG written to disk; auto-creates baseline on first run | ~50ms |
+| `--reduced-motion` | Extra screenshot with `prefers-reduced-motion: reduce` (WCAG 2.3.3) → `reducedMotion.out` | ~200ms |
+| `--forced-colors` | Extra screenshot with Windows High Contrast Mode (`forced-colors: active`) → `forcedColors.out` | ~200ms |
+| `--print` | Extra screenshot with `media: print` — verifies print stylesheet → `print.out` | ~200ms |
+| `--no-js` | Screenshot with JavaScript **disabled** — flags blank SPAs without SSR → `noJs` | ~2s |
+| `--focus-audit` | Tab through up to 20 focusable elements; flags **missing focus rings** (WCAG 2.4.7) → `focusAudit` | ~3-5s |
 
 ---
 
@@ -222,11 +230,16 @@ node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out 1280 800 --scrol
 node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out 1280 800 --video       # record a .webm of animated content
 
 # Extended checks (combinable with any of the above)
-node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --dark-mode       # dark mode screenshot
-node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --css-coverage    # unused CSS % per stylesheet
-node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --har             # save network HAR file
-node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --cwv             # Core Web Vitals (LCP/CLS/FCP/TTFB)
+node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --dark-mode         # dark mode screenshot + axe in dark
+node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --css-coverage      # unused CSS % per stylesheet
+node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --har               # save network HAR file
+node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --cwv               # Core Web Vitals (LCP/CLS+sources/FCP/TTFB/TBT)
 node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --compare=base.png  # pixel-diff vs baseline
+node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --reduced-motion    # prefers-reduced-motion screenshot (WCAG 2.3.3)
+node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --forced-colors     # Windows High Contrast Mode screenshot
+node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --print             # print stylesheet screenshot
+node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --no-js             # JS-disabled screenshot (SSR/progressive enhancement check)
+node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --focus-audit       # keyboard focus ring visibility audit
 ```
 
 ---
