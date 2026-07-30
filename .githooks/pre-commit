@@ -12,6 +12,15 @@ if [ ! -f "$PATTERNS" ]; then
   exit 0
 fi
 
+# Check committer identity against blocked patterns
+COMMITTER_EMAIL=$(git config user.email 2>/dev/null)
+COMMITTER_NAME=$(git config user.name 2>/dev/null)
+if printf '%s\n%s' "$COMMITTER_EMAIL" "$COMMITTER_NAME" | grep -qIEf "$PATTERNS" 2>/dev/null; then
+  printf '\nCommit blocked: git user.email or user.name matches a restricted pattern.\n' >&2
+  printf '  Run: git config user.email "you@example.com"  (use a non-work address)\n' >&2
+  exit 1
+fi
+
 STAGED=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null)
 [ -z "$STAGED" ] && exit 0
 
