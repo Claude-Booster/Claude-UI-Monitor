@@ -650,13 +650,10 @@ if ((Test-Path $e2eScript) -and (Test-Path $nodeModPw)) {
     Assert "pw-e2e-test: runBundleAudit function defined"        ($pwSrc -match 'function runBundleAudit')
     Assert "pw-e2e-test: runFontAudit function defined"          ($pwSrc -match 'function runFontAudit')
     Assert "pw-e2e-test: setupResponseTracking function defined" ($pwSrc -match 'function setupResponseTracking')
-    Assert "pw-e2e-test: getCSSCoverage function defined"        ($pwSrc -match 'function getCSSCoverage')
     Assert "pw-e2e-test: runCWV function defined"                ($pwSrc -match 'function runCWV')
     Assert "pw-e2e-test: captureDarkMode function defined"       ($pwSrc -match 'function captureDarkMode')
     Assert "pw-e2e-test: compareScreenshots function defined"    ($pwSrc -match 'function compareScreenshots')
     Assert "pw-e2e-test: --dark-mode flag handled"              ($pwSrc -match 'darkMode\s*=')
-    Assert "pw-e2e-test: --css-coverage flag handled"           ($pwSrc -match 'cssCoverage\s*=')
-    Assert "pw-e2e-test: --har flag handled"                    ($pwSrc -match 'harCapture\s*=')
     Assert "pw-e2e-test: --cwv flag handled"                    ($pwSrc -match 'cwvMode\s*=')
     Assert "pw-e2e-test: --compare flag handled"                ($pwSrc -match 'comparePath\s*=')
 
@@ -672,24 +669,8 @@ if ((Test-Path $e2eScript) -and (Test-Path $nodeModPw)) {
     Assert "about:blank: images absent (real-URL-only)"          ($t17bJson -and -not $t17bJson.PSObject.Properties['images'])
     Assert "about:blank: bundle absent (real-URL-only)"          ($t17bJson -and -not $t17bJson.PSObject.Properties['bundle'])
     Assert "about:blank: fonts absent (real-URL-only)"           ($t17bJson -and -not $t17bJson.PSObject.Properties['fonts'])
-    Assert "about:blank: securityHeaders absent (real-URL-only)" ($t17bJson -and -not $t17bJson.PSObject.Properties['securityHeaders'])
 
-    # 17c. --css-coverage (works on about:blank via page.setContent)
-    $t17cOut = "$env:USERPROFILE\.claude\ui-screenshots\test17-css.png"
-    $t17cRaw = node $e2eScript "about:blank" $t17cOut 1280 800 "--css-coverage" 2>&1
-    try { $t17cJson = $t17cRaw | ConvertFrom-Json -ErrorAction Stop } catch { $t17cJson = $null }
-    Assert "--css-coverage: JSON has 'css' field"                ($t17cJson -and $t17cJson.PSObject.Properties['css'])         "(got: $t17cRaw)"
-    Assert "--css-coverage: css.sheetsCount present"             ($t17cJson -and $t17cJson.css.PSObject.Properties['sheetsCount']) "(got: $($t17cJson.css))"
-    Assert "--css-coverage: css.unusedPct present"               ($t17cJson -and $null -ne $t17cJson.css.unusedPct)           "(got: $($t17cJson.css.unusedPct))"
-
-    # 17d. --har (HAR file recorded for about:blank)
-    $t17dOut = "$env:USERPROFILE\.claude\ui-screenshots\test17-har.png"
-    $t17dRaw = node $e2eScript "about:blank" $t17dOut 1280 800 "--har" 2>&1
-    try { $t17dJson = $t17dRaw | ConvertFrom-Json -ErrorAction Stop } catch { $t17dJson = $null }
-    Assert "--har: JSON has 'harPath' field"                     ($t17dJson -and $t17dJson.PSObject.Properties['harPath'])     "(got: $t17dRaw)"
-    Assert "--har: .har file created on disk"                    ($t17dJson -and (Test-Path ($t17dJson.harPath ?? 'NONE')))    "(path: $($t17dJson.harPath))"
-
-    # 17e. --compare: first run creates baseline (about:blank)
+    # 17c. --compare: first run creates baseline (about:blank)
     $t17Base = "$env:USERPROFILE\.claude\ui-screenshots\test17-baseline.png"
     if (Test-Path $t17Base) { Remove-Item $t17Base -Force }
     $t17eOut = "$env:USERPROFILE\.claude\ui-screenshots\test17-cmp1.png"
@@ -698,7 +679,7 @@ if ((Test-Path $e2eScript) -and (Test-Path $nodeModPw)) {
     Assert "--compare: first run: diff.baselineCreated is true"  ($t17eJson -and $t17eJson.diff.baselineCreated -eq $true)    "(got: $($t17eJson.diff))"
     Assert "--compare: first run: baseline file created"         (Test-Path $t17Base)                                          "(path: $t17Base)"
 
-    # 17f. --compare: second run produces diff object (identical → diffPct 0)
+    # 17d. --compare: second run produces diff object (identical → diffPct 0)
     $t17fOut = "$env:USERPROFILE\.claude\ui-screenshots\test17-cmp2.png"
     $t17fRaw = node $e2eScript "about:blank" $t17fOut 1280 800 "--compare=$t17Base" 2>&1
     try { $t17fJson = $t17fRaw | ConvertFrom-Json -ErrorAction Stop } catch { $t17fJson = $null }
@@ -706,7 +687,7 @@ if ((Test-Path $e2eScript) -and (Test-Path $nodeModPw)) {
     Assert "--compare: second run: identical → diffPct = 0"      ($t17fJson -and $t17fJson.diff.diffPct -eq 0)               "(got: $($t17fJson.diff.diffPct))"
     Assert "--compare: second run: diff PNG file created"        ($t17fJson -and (Test-Path ($t17fJson.diff.diffPath ?? 'NONE'))) "(path: $($t17fJson.diff.diffPath))"
 
-    # 17g. Dark mode, CWV, and real-URL always-on fields — use local HTTP server
+    # 17e. Dark mode, CWV, and real-URL always-on fields — use local HTTP server
     $t17Port = 19994
     $t17Job  = $null
     $t17Up   = $false
@@ -735,8 +716,6 @@ if ((Test-Path $e2eScript) -and (Test-Path $nodeModPw)) {
         Assert "real URL: bundle.totalTransferKB present"       ($t17rJson -and $null -ne $t17rJson.bundle.totalTransferKB)      "(got: $($t17rJson.bundle.totalTransferKB))"
         Assert "real URL: fonts field present"                   ($t17rJson -and $t17rJson.PSObject.Properties['fonts'])
         Assert "real URL: fonts.loaded is a number"              ($t17rJson -and $null -ne $t17rJson.fonts.loaded)               "(got: $($t17rJson.fonts.loaded))"
-        Assert "real URL: securityHeaders field present"         ($t17rJson -and $t17rJson.PSObject.Properties['securityHeaders'])
-        Assert "real URL: securityHeaders.missing is an array"  ($t17rJson -and $t17rJson.securityHeaders.missing -is [array])   "(got: $($t17rJson.securityHeaders.missing))"
 
         # Dark mode
         $t17dkOut = "$env:USERPROFILE\.claude\ui-screenshots\test17-dark.png"
@@ -808,8 +787,7 @@ if ((Test-Path $e2eScript18) -and (Test-Path $nm18)) {
     Assert "pw-e2e-test: redirectChain tracking in setupResponseTracking" ($src18 -match 'redirectChain\.push')
     Assert "pw-e2e-test: getRedirectChain closure exported"               ($src18 -match 'getRedirectChain')
 
-    # JSON-LD and blocksZoom in runMetaAudit
-    Assert "pw-e2e-test: JSON-LD structuredData in runMetaAudit"   ($src18 -match 'structuredData')
+    # blocksZoom in runMetaAudit
     Assert "pw-e2e-test: blocksZoom check in runMetaAudit"         ($src18 -match 'blocksZoom')
 
     # lazyAboveFold and fetchpriority in runImageAudit
@@ -869,8 +847,6 @@ if ((Test-Path $e2eScript18) -and (Test-Path $nm18)) {
     Assert "real URL s18: scripts.warnings is an array"                ($j18 -and $j18.scripts.PSObject.Properties['warnings'])
     Assert "real URL s18: touchTargets field present"                  ($j18 -and $j18.PSObject.Properties['touchTargets'])
     Assert "real URL s18: touchTargets.failingAA is a number"          ($j18 -and $j18.touchTargets.PSObject.Properties['failingAA'])
-    Assert "real URL s18: meta.structuredData field present"           ($j18 -and $j18.meta.PSObject.Properties['structuredData'])
-    Assert "real URL s18: meta.structuredData.count >= 1"              ($j18 -and $j18.meta.structuredData.count -ge 1)
     Assert "real URL s18: meta.blocksZoom is defined"                  ($j18 -and $j18.meta.PSObject.Properties['blocksZoom'])
     Assert "real URL s18: images.lazyAboveFold is a number"            ($j18 -and $j18.images.PSObject.Properties['lazyAboveFold'])
     Assert "real URL s18: images.missingFetchPriority is a number"     ($j18 -and $j18.images.PSObject.Properties['missingFetchPriority'])
@@ -942,8 +918,8 @@ if ((Test-Path $e2eScript18) -and (Test-Path $nm18)) {
     Warn "E2E script or node_modules missing — skipping new feature tests (Section 18)"
 }
 
-# ── 19. Batch A+B features (headings, domA11y, links, layout, cookies, pwa, etc.) ──
-Write-Host "`n── 19. Batch A+B audit features ──────────────────────────────" -ForegroundColor Cyan
+# ── 19. New always-on UX fields (headings, domA11y, layout, meta.lang, missingSrcset) ──
+Write-Host "`n── 19. New UX audit fields ────────────────────────────────────" -ForegroundColor Cyan
 
 $e2eScript19 = "$SCRIPTS\pw-e2e-test.js"
 $nm19        = "$SCRIPTS\node_modules"
@@ -951,51 +927,15 @@ $nm19        = "$SCRIPTS\node_modules"
 if ((Test-Path $e2eScript19) -and (Test-Path $nm19)) {
     $src19 = Get-Content $e2eScript19 -Raw
 
-    # Source-level: Batch A always-on functions
+    # Source-level: new UX audit functions
     Assert "pw-e2e-test: runHeadingAudit function defined"    ($src19 -match 'async function runHeadingAudit')
     Assert "pw-e2e-test: runDomA11yAudit function defined"    ($src19 -match 'async function runDomA11yAudit')
-    Assert "pw-e2e-test: runLinksAudit function defined"      ($src19 -match 'async function runLinksAudit')
     Assert "pw-e2e-test: runLayoutAudit function defined"     ($src19 -match 'async function runLayoutAudit')
-    Assert "pw-e2e-test: computeCspStrength function defined" ($src19 -match 'function computeCspStrength')
-    Assert "pw-e2e-test: TRACKER_DOMAINS constant defined"    ($src19 -match 'const TRACKER_DOMAINS')
-
-    # Source-level: Batch B flag-gated functions
-    Assert "pw-e2e-test: runPWAAudit function defined"        ($src19 -match 'async function runPWAAudit')
-    Assert "pw-e2e-test: checkBudget function defined"        ($src19 -match 'function checkBudget')
-    Assert "pw-e2e-test: runImageFormatCheck function defined"($src19 -match 'async function runImageFormatCheck')
     Assert "pw-e2e-test: runLinkCheck function defined"       ($src19 -match 'async function runLinkCheck')
-    Assert "pw-e2e-test: runSEODeepAudit function defined"    ($src19 -match 'async function runSEODeepAudit')
-
-    # Flag parsing presence
-    Assert "pw-e2e-test: --pwa flag handled"         ($src19 -match "pwaMode\s*=\s*flags\['pwa'\]")
-    Assert "pw-e2e-test: --img-format flag handled"  ($src19 -match "imgFormatMode\s*=\s*flags\['img-format'\]")
-    Assert "pw-e2e-test: --link-check flag handled"  ($src19 -match "linkCheckMode\s*=\s*flags\['link-check'\]")
-    Assert "pw-e2e-test: --seo-deep flag handled"    ($src19 -match "seoDeepMode\s*=\s*flags\['seo-deep'\]")
-    Assert "pw-e2e-test: --budget-js flag handled"   ($src19 -match "budgetJs\s*=\s*parseInt")
-
-    # Meta extensions: lang, charset
-    Assert "pw-e2e-test: meta.lang in runMetaAudit"    ($src19 -match "lang\s*=\s*document\.documentElement\.lang")
-    Assert "pw-e2e-test: meta.charset in runMetaAudit" ($src19 -match "document\.characterSet")
-
-    # Cookie security in setupResponseTracking
-    Assert "pw-e2e-test: getCookiesInsecure closure"   ($src19 -match 'getCookiesInsecure')
-    Assert "pw-e2e-test: Secure flag check in cookies" ($src19 -match "missing Secure")
-
-    # Mixed content + CSP strength + unsandboxed iframes in runFullAudit
-    Assert "pw-e2e-test: getMixedContent closure"          ($src19 -match 'getMixedContent')
-    Assert "pw-e2e-test: cspStrength computed in runFullAudit" ($src19 -match 'cspStrength')
-    Assert "pw-e2e-test: unsandboxedIframes computed"      ($src19 -match 'unsandboxedIframes')
-
-    # srcset audit in runImageAudit
-    Assert "pw-e2e-test: missingSrcset in runImageAudit"   ($src19 -match 'missingSrcset')
-
-    # bundle.protocol + missingPreconnect
-    Assert "pw-e2e-test: bundle.protocol in runBundleAudit"         ($src19 -match 'nextHopProtocol')
-    Assert "pw-e2e-test: bundle.missingPreconnect in runBundleAudit" ($src19 -match 'missingPreconnect')
-
-    # Pre-consent trackers
-    Assert "pw-e2e-test: getPreConsentTrackers closure"    ($src19 -match 'getPreConsentTrackers')
-    Assert "pw-e2e-test: preConsentTrackers in scripts"    ($src19 -match 'preConsentTrackers')
+    Assert "pw-e2e-test: --link-check flag handled"          ($src19 -match "linkCheckMode\s*=\s*flags\['link-check'\]")
+    Assert "pw-e2e-test: meta.lang in runMetaAudit"          ($src19 -match "document\.documentElement\.lang")
+    Assert "pw-e2e-test: meta.charset in runMetaAudit"       ($src19 -match "document\.characterSet")
+    Assert "pw-e2e-test: missingSrcset in runImageAudit"     ($src19 -match 'missingSrcset')
 
     # Live URL tests
     $t19Port = 19994
@@ -1007,7 +947,6 @@ if ((Test-Path $e2eScript19) -and (Test-Path $nm19)) {
 <head>
   <meta charset="UTF-8">
   <title>Section 19 Test Page</title>
-  <meta name="description" content="pw-e2e-test section 19 test page">
   <meta name="viewport" content="width=device-width, initial-scale=1">
 </head>
 <body>
@@ -1015,8 +954,6 @@ if ((Test-Path $e2eScript19) -and (Test-Path $nm19)) {
   <h2>Sub heading</h2>
   <h4>Skip from h2 to h4</h4>
   <button style="width:80px;height:40px">Action</button>
-  <a href="#generic">click here</a>
-  <a href="/page2" id="link2">About page</a>
   <img src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==" alt="1px dot" width="300" height="200">
   <input type="text" placeholder="Unlabeled input">
   <label for="namedInput">Name</label>
@@ -1030,7 +967,6 @@ if ((Test-Path $e2eScript19) -and (Test-Path $nm19)) {
 
     $t19Url = "http://127.0.0.1:$t19Port/"
 
-    # Always-on: headings, domA11y, links, layout, cookies
     $ss19 = "$env:TEMP\s19-real.png"
     $r19  = (node $e2eScript19 $t19Url $ss19 1280 800 2>$null) -join ''
     try { $j19 = $r19 | ConvertFrom-Json } catch { $j19 = $null }
@@ -1046,37 +982,15 @@ if ((Test-Path $e2eScript19) -and (Test-Path $nm19)) {
     Assert "real URL s19: domA11y.unlabeledInputs >= 1"          ($j19 -and $j19.domA11y.unlabeledInputs -ge 1)
     Assert "real URL s19: domA11y.warnings is an array"          ($j19 -and $j19.domA11y.PSObject.Properties['warnings'])
 
-    Assert "real URL s19: links field present"                   ($j19 -and $j19.PSObject.Properties['links'])
-    Assert "real URL s19: links.genericAnchorText >= 1"          ($j19 -and $j19.links.genericAnchorText -ge 1)
-    Assert "real URL s19: links.warnings is an array"            ($j19 -and $j19.links.PSObject.Properties['warnings'])
-
     Assert "real URL s19: layout field present"                  ($j19 -and $j19.PSObject.Properties['layout'])
     Assert "real URL s19: layout.hasHorizontalScroll is bool"    ($j19 -and $j19.layout.PSObject.Properties['hasHorizontalScroll'])
     Assert "real URL s19: layout.wideElements is an array"       ($j19 -and $j19.layout.PSObject.Properties['wideElements'])
 
-    Assert "real URL s19: cookies field present"                 ($j19 -and $j19.PSObject.Properties['cookies'])
-    Assert "real URL s19: cookies.insecureCount >= 0"            ($j19 -and $j19.cookies.PSObject.Properties['insecureCount'])
-    Assert "real URL s19: cookies.warnings is an array"          ($j19 -and $j19.cookies.PSObject.Properties['warnings'])
-
-    Assert "real URL s19: meta.lang present"                     ($j19 -and $j19.meta.PSObject.Properties['lang'])
     Assert "real URL s19: meta.lang is 'en'"                     ($j19 -and $j19.meta.lang -eq 'en')
     Assert "real URL s19: meta.charset present"                  ($j19 -and $j19.meta.PSObject.Properties['charset'])
     Assert "real URL s19: images.missingSrcset >= 0"             ($j19 -and $j19.images.PSObject.Properties['missingSrcset'])
-    Assert "real URL s19: bundle.protocol present"               ($j19 -and $j19.bundle.PSObject.Properties['protocol'])
-    Assert "real URL s19: bundle.missingPreconnect is an array"  ($j19 -and $j19.bundle.PSObject.Properties['missingPreconnect'])
-    Assert "real URL s19: securityHeaders.cspStrength present"   ($j19 -and $j19.securityHeaders.PSObject.Properties['cspStrength'])
-    Assert "real URL s19: securityHeaders.mixedContent is array" ($j19 -and $j19.securityHeaders.PSObject.Properties['mixedContent'])
-    Assert "real URL s19: scripts.preConsentTrackers is array"   ($j19 -and $j19.scripts.PSObject.Properties['preConsentTrackers'])
 
-    # --pwa: manifest check (no manifest on test server, should get warning)
-    $ss19Pwa = "$env:TEMP\s19-pwa.png"
-    $r19Pwa  = (node $e2eScript19 $t19Url $ss19Pwa 1280 800 --pwa 2>$null) -join ''
-    try { $j19Pwa = $r19Pwa | ConvertFrom-Json } catch { $j19Pwa = $null }
-    Assert "--pwa: pwa field present"                  ($j19Pwa -and $j19Pwa.PSObject.Properties['pwa'])
-    Assert "--pwa: pwa.hasManifest is boolean"         ($j19Pwa -and $j19Pwa.pwa.PSObject.Properties['hasManifest'])
-    Assert "--pwa: pwa.warnings is an array"           ($j19Pwa -and $j19Pwa.pwa.PSObject.Properties['warnings'])
-
-    # --link-check: should find no broken links (or at least return the field)
+    # --link-check
     $ss19Lc = "$env:TEMP\s19-lc.png"
     $r19Lc  = (node $e2eScript19 $t19Url $ss19Lc 1280 800 --link-check 2>$null) -join ''
     try { $j19Lc = $r19Lc | ConvertFrom-Json } catch { $j19Lc = $null }
@@ -1085,29 +999,11 @@ if ((Test-Path $e2eScript19) -and (Test-Path $nm19)) {
     Assert "--link-check: linkCheck.broken >= 0"       ($j19Lc -and $j19Lc.linkCheck.PSObject.Properties['broken'])
     Assert "--link-check: linkCheck.warnings is array" ($j19Lc -and $j19Lc.linkCheck.PSObject.Properties['warnings'])
 
-    # --seo-deep: robots.txt + sitemap + hreflang
-    $ss19Seo = "$env:TEMP\s19-seo.png"
-    $r19Seo  = (node $e2eScript19 $t19Url $ss19Seo 1280 800 --seo-deep 2>$null) -join ''
-    try { $j19Seo = $r19Seo | ConvertFrom-Json } catch { $j19Seo = $null }
-    Assert "--seo-deep: seoDeep field present"           ($j19Seo -and $j19Seo.PSObject.Properties['seoDeep'])
-    Assert "--seo-deep: seoDeep.robotsTxt present"       ($j19Seo -and $j19Seo.seoDeep.PSObject.Properties['robotsTxt'])
-    Assert "--seo-deep: seoDeep.hreflang present"        ($j19Seo -and $j19Seo.seoDeep.PSObject.Properties['hreflang'])
-    Assert "--seo-deep: seoDeep.warnings is an array"    ($j19Seo -and $j19Seo.seoDeep.PSObject.Properties['warnings'])
-
-    # --budget-js: budget exceeded / passed structure
-    $ss19Bud = "$env:TEMP\s19-bud.png"
-    $r19Bud  = (node $e2eScript19 $t19Url $ss19Bud 1280 800 "--budget-js=999999" 2>$null) -join ''
-    try { $j19Bud = $r19Bud | ConvertFrom-Json } catch { $j19Bud = $null }
-    Assert "--budget-js: budget field present"           ($j19Bud -and $j19Bud.PSObject.Properties['budget'])
-    Assert "--budget-js: budget.passed is boolean"       ($j19Bud -and $j19Bud.budget.PSObject.Properties['passed'])
-    Assert "--budget-js: budget.exceeded is an array"    ($j19Bud -and $j19Bud.budget.PSObject.Properties['exceeded'])
-    Assert "--budget-js=999999: no budget exceeded"      ($j19Bud -and $j19Bud.budget.passed -eq $true)
-
     if ($t19Proc) {
         try { Stop-Process -Id $t19Proc.Id -Force -ErrorAction SilentlyContinue } catch {}
     }
 } else {
-    Warn "E2E script or node_modules missing — skipping Batch A+B feature tests (Section 19)"
+    Warn "E2E script or node_modules missing — skipping new UX field tests (Section 19)"
 }
 
 # ── Summary ──────────────────────────────────────────────────────────────────

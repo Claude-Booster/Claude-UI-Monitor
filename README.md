@@ -97,18 +97,15 @@ Every screenshot run (hook or manual) now includes these zero-overhead audits:
 
 | Field | What it reports |
 |---|---|
-| `meta` | OpenGraph/SEO audit, canonical, viewport; `issues[]` list; **lang/charset/dir**; **JSON-LD structured data** (`structuredData.count/types/parseErrors`); **viewport zoom anti-pattern** (`blocksZoom`) |
-| `images` | Broken, missing alt, oversized, legacy formats; **lazy-above-fold** (hurts LCP); **missing `fetchpriority`** on hero images; **missing `srcset`** on wide images |
-| `scripts` | Third-party scripts: **SRI missing**, **render-blocking**, **known trackers**, **stylesheet SRI**; **pre-consent tracker calls** (fire before user action) |
+| `meta` | `title`, `viewport`, `blocksZoom` (WCAG 1.4.4), `lang`, `charset`, `dir`; `issues[]` for zoom-blocking or missing `lang` |
+| `images` | Broken, missing alt, oversized; **lazy-above-fold** (hurts LCP); **missing `fetchpriority`** on hero images; **missing `srcset`** on wide images |
+| `scripts` | **Render-blocking** third-party scripts that delay page display |
 | `touchTargets` | Interactive elements below **24×24px** (WCAG 2.5.8 AA) — `failingAA` count + element details |
 | `headings` | `h1Count`, heading **level skips** (h2→h4 etc.), `warnings[]` (WCAG 2.4.6) |
 | `domA11y` | **Broken ARIA ID references** (`aria-labelledby` etc.); **unlabeled form inputs** (WCAG 1.3.1) |
-| `links` | **Generic anchor text** ("click here", "read more") — hurts SEO + screen reader navigation |
 | `layout` | **Horizontal scroll** / viewport overflow — `hasHorizontalScroll`, `excessPx`, `wideElements[]` |
-| `bundle` | JS / CSS / image KB; largest + slowest resources; **HTTP/2 protocol**; **missing preconnect hints** |
+| `bundle` | JS / CSS / image KB; largest + slowest resources; `warnings[]` for JS > 512KB or total > 2MB |
 | `fonts` | Loaded/failed fonts, FOIT risk (`font-display: auto/block`), FOUT risk (`swap`) |
-| `cookies` | `Set-Cookie` headers missing **Secure** or **SameSite** flags — `insecureCount` + details |
-| `securityHeaders` | CSP (+ **strength score**), HSTS, X-Frame-Options; **mixed content**; **unsandboxed cross-origin iframes** |
 | `redirects` | **Redirect chain** detected during navigation (3xx) — only present when redirects occur |
 
 **Optional flag-gated checks:**
@@ -125,11 +122,7 @@ Every screenshot run (hook or manual) now includes these zero-overhead audits:
 | `--print` | Extra screenshot with `media: print` — verifies print stylesheet → `print.out` | ~200ms |
 | `--no-js` | Screenshot with JavaScript **disabled** — flags blank SPAs without SSR → `noJs` | ~2s |
 | `--focus-audit` | Tab through up to 20 focusable elements; flags **missing focus rings** (WCAG 2.4.7) → `focusAudit` | ~3-5s |
-| `--pwa` | Web app manifest + service worker check → `pwa` | ~500ms |
-| `--img-format` | WebP/AVIF content negotiation — do servers serve modern formats when requested? → `imgFormat` | ~1s |
 | `--link-check` | HEAD-checks all internal links (cap 20); flags broken ones → `linkCheck` | ~3-10s |
-| `--seo-deep` | robots.txt, sitemap.xml reachability, hreflang x-default → `seoDeep` | ~1s |
-| `--budget-js=N` | JS KB budget. Combine with `--budget-css`, `--budget-total`, `--budget-requests` → `budget.exceeded[]` | ~0ms |
 
 ---
 
@@ -250,11 +243,7 @@ node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --f
 node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --print             # print stylesheet screenshot
 node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --no-js             # JS-disabled screenshot (SSR/progressive enhancement check)
 node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --focus-audit       # keyboard focus ring visibility audit
-node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --pwa               # web app manifest + service worker check
-node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --img-format        # WebP/AVIF content negotiation check
-node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --link-check        # broken internal link check
-node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --seo-deep          # robots.txt + sitemap + hreflang check
-node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 "--budget-js=200" "--budget-total=1000"  # performance budgets
+node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --link-check        # broken internal link check (cap 20)
 ```
 
 ---

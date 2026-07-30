@@ -1,27 +1,22 @@
-// pw-e2e-test.js — Playwright smoke test with optional advanced UI checks.
+// pw-e2e-test.js — Playwright UI/UX audit tool.
 //
 // Single-page: node pw-e2e-test.js <url> <out.png> [width] [height] [flags]
 // Multi-page:  node pw-e2e-test.js <url> <prefix> [w] [h] --routes=auto|/r1,/r2 [--nav=link-crawl|tab-click]
 //
 // Always-on for real URLs (zero overhead):
-//   meta            SEO/OG, JSON-LD, blocksZoom, lang, charset, dir
-//   images          broken, missingAlt, oversized, lazy-above-fold, missingSrcset, missingFetchPriority
-//   scripts         third-party SRI, render-blocking, trackers, stylesheet SRI, pre-consent tracker calls
-//   touchTargets    WCAG 2.5.8 interactive elements < 24px
-//   headings        h1 count, level-skip detection
-//   domA11y         ARIA broken refs, unlabeled inputs
-//   links           generic anchor text (hurts SEO + screen readers)
+//   meta            title, viewport, blocksZoom (WCAG 1.4.4), lang, charset, dir
+//   images          broken, missingAlt, oversized, lazy-above-fold, missingFetchPriority, missingSrcset
+//   scripts         render-blocking third-party scripts (delays page display)
+//   touchTargets    interactive elements < 24×24px (WCAG 2.5.8)
+//   headings        h1 count, heading level skips (WCAG 2.4.6)
+//   domA11y         broken ARIA ID refs, unlabeled form inputs (WCAG 1.3.1)
 //   layout          horizontal scroll / viewport overflow
-//   bundle          JS/CSS/img KB, protocol, missing preconnect hints
+//   bundle          JS/CSS/image KB, largest + slowest resources
 //   fonts           loaded/failed, FOIT/FOUT risk
-//   cookies         Secure/SameSite flags on Set-Cookie headers
-//   securityHeaders CSP (+ strength), HSTS, X-Frame-Options, mixed content, unsandboxed iframes
-//   redirects       3xx redirect chain (when present)
+//   redirects       3xx redirect chain (only present when redirects occur)
 //
-// Extended flags (single-page + multi-page):
+// Flag-gated checks:
 //   --dark-mode       screenshot + axe in dark mode → darkMode, darkModeA11y
-//   --css-coverage    unused CSS % per stylesheet → css
-//   --har             network HAR file → harPath
 //   --cwv             LCP, CLS+sources, FCP, TTFB, TBT → cwv
 //   --compare=<path>  pixel-diff vs baseline → diff
 //   --reduced-motion  prefers-reduced-motion screenshot → reducedMotion
@@ -29,17 +24,10 @@
 //   --print           media: print screenshot → print
 //   --no-js           JS-disabled screenshot → noJs
 //   --focus-audit     keyboard focus ring audit → focusAudit
-//   --pwa             web app manifest + service worker check → pwa
-//   --img-format      WebP/AVIF content negotiation check → imgFormat
 //   --link-check      broken internal link check (HEAD, cap 20) → linkCheck
-//   --seo-deep        robots.txt, sitemap, hreflang → seoDeep
-//   --budget-js=N     JS KB budget (adds budget.exceeded[] if over)
-//   --budget-css=N    CSS KB budget
-//   --budget-total=N  total transfer KB budget
-//   --budget-requests=N  max request count budget
 //
 // Advanced flags (auto-detected or explicit):
-//   --detect-advanced  auto-enable animation/hover/scroll based on page features
+//   --detect-advanced  auto-enable based on CSS animations, WebGL, canvas, GSAP, etc.
 //   --animated         multi-frame capture + FPS
 //   --hover            hover state screenshots
 //   --scroll           scroll position screenshots
@@ -51,20 +39,6 @@ const { chromium }   = require('playwright');
 const { AxeBuilder } = require('@axe-core/playwright');
 const path           = require('path');
 const fs             = require('fs');
-
-// ── Tracker domain registry (shared between response tracking and DOM audit) ──
-const TRACKER_DOMAINS = {
-  'google-analytics.com':  'Google Analytics',
-  'googletagmanager.com':  'Google Tag Manager',
-  'connect.facebook.net':  'Facebook Pixel',
-  'static.hotjar.com':     'Hotjar',
-  'widget.intercom.io':    'Intercom',
-  'cdn.segment.com':       'Segment',
-  'js.stripe.com':         'Stripe',
-  'snap.licdn.com':        'LinkedIn Insight',
-  'platform.twitter.com':  'Twitter Widget',
-  'script.crazyegg.com':   'Crazy Egg',
-};
 
 // ── Argument parsing ──────────────────────────────────────────────────────────
 const positional = process.argv.slice(2).filter(a => !a.startsWith('--'));
@@ -94,8 +68,6 @@ const forceVideo = flags['video']           === 'true';
 const anyAdvFlag = detectAdv || forceAnim || forceHover || forceScroll || forceVideo;
 
 const darkMode     = flags['dark-mode']      === 'true';
-const cssCoverage  = flags['css-coverage']   === 'true';
-const harCapture   = flags['har']            === 'true';
 const cwvMode      = flags['cwv']            === 'true';
 const comparePath  = flags['compare']        || null;
 const reducedMotion= flags['reduced-motion'] === 'true';
@@ -103,90 +75,23 @@ const forcedColors = flags['forced-colors']  === 'true';
 const printLayout  = flags['print']          === 'true';
 const noJsMode     = flags['no-js']          === 'true';
 const focusAudit   = flags['focus-audit']    === 'true';
-const pwaMode      = flags['pwa']            === 'true';
-const imgFormatMode= flags['img-format']     === 'true';
 const linkCheckMode= flags['link-check']     === 'true';
-const seoDeepMode  = flags['seo-deep']       === 'true';
-const budgetJs     = parseInt(flags['budget-js']       || '0', 10) || null;
-const budgetCss    = parseInt(flags['budget-css']      || '0', 10) || null;
-const budgetTotal  = parseInt(flags['budget-total']    || '0', 10) || null;
-const budgetReqs   = parseInt(flags['budget-requests'] || '0', 10) || null;
-const anyBudget    = !!(budgetJs || budgetCss || budgetTotal || budgetReqs);
 
-// ── Response tracking ─────────────────────────────────────────────────────────
+// ── Response tracking (redirect chain + image formats) ────────────────────────
 function setupResponseTracking(page) {
-  const securityHeaders    = {};
-  const imageFormats       = {};
-  const redirectChain      = [];
-  const mixedContent       = [];
-  const cookiesInsecure    = [];
-  const preConsentTrackers = [];
-  let secCaptured = false;
-  let pageIsHttps = null;
+  const imageFormats  = {};
+  const redirectChain = [];
 
   page.on('response', response => {
     try {
       const status  = response.status();
       const headers = response.headers();
       const resUrl  = response.url();
-      const resType = response.request().resourceType();
 
-      // Redirect chain
       if ([301, 302, 303, 307, 308].includes(status)) {
         redirectChain.push({ from: resUrl, status, to: headers['location'] || null });
       }
 
-      // Security headers + HTTPS detection (from first document response)
-      if (!secCaptured && resType === 'document' && status < 400) {
-        pageIsHttps = resUrl.startsWith('https://');
-        securityHeaders.csp              = headers['content-security-policy']   ?? null;
-        securityHeaders.hsts             = headers['strict-transport-security'] ?? null;
-        securityHeaders.xFrameOptions    = headers['x-frame-options']           ?? null;
-        securityHeaders.xcto             = headers['x-content-type-options']    ?? null;
-        securityHeaders.referrerPolicy   = headers['referrer-policy']           ?? null;
-        securityHeaders.permissionsPolicy= headers['permissions-policy']        ?? null;
-        securityHeaders.missing = [
-          !securityHeaders.csp            && 'content-security-policy',
-          !securityHeaders.hsts           && 'strict-transport-security',
-          !securityHeaders.xFrameOptions  && 'x-frame-options',
-          !securityHeaders.xcto           && 'x-content-type-options',
-          !securityHeaders.referrerPolicy && 'referrer-policy',
-        ].filter(Boolean);
-        secCaptured = true;
-      }
-
-      // Mixed content: HTTP sub-resource on HTTPS page
-      if (pageIsHttps && resUrl.startsWith('http://') &&
-          !resUrl.startsWith('http://localhost') && !resUrl.startsWith('http://127.')) {
-        mixedContent.push({ url: resUrl.slice(0, 100), type: resType });
-      }
-
-      // Cookie security (Secure + SameSite flags)
-      const setCookieRaw = headers['set-cookie'];
-      if (setCookieRaw) {
-        for (const line of setCookieRaw.split('\n')) {
-          if (!line.trim()) continue;
-          const name      = (line.split('=')[0] || '').trim().slice(0, 30);
-          const lower     = line.toLowerCase();
-          const hasSecure = /;\s*secure/.test(lower);
-          const ssMatch   = lower.match(/;\s*samesite=(\w+)/);
-          const sameSite  = ssMatch ? ssMatch[1] : null;
-          const issues = [];
-          if (pageIsHttps && !hasSecure) issues.push('missing Secure');
-          if (!sameSite)                 issues.push('missing SameSite');
-          if (issues.length) cookiesInsecure.push({ name, issues, sameSite: sameSite || 'not set' });
-        }
-      }
-
-      // Pre-consent tracker calls (fire at load time = before any user interaction)
-      for (const [domain, trackerName] of Object.entries(TRACKER_DOMAINS)) {
-        if (resUrl.includes(domain)) {
-          preConsentTrackers.push({ url: resUrl.slice(0, 80), name: trackerName });
-          break;
-        }
-      }
-
-      // Image format tracking
       const ct = headers['content-type'];
       if (ct && ct.startsWith('image/')) {
         imageFormats[resUrl] = ct.split(';')[0].trim();
@@ -195,28 +100,9 @@ function setupResponseTracking(page) {
   });
 
   return {
-    getSecurityHeaders:     () => (secCaptured ? securityHeaders : null),
-    getImageFormats:        () => imageFormats,
-    getRedirectChain:       () => redirectChain,
-    getMixedContent:        () => mixedContent,
-    getCookiesInsecure:     () => cookiesInsecure,
-    getPreConsentTrackers:  () => preConsentTrackers,
+    getImageFormats:  () => imageFormats,
+    getRedirectChain: () => redirectChain,
   };
-}
-
-// ── CSP strength evaluation (Node-only, no browser needed) ────────────────────
-function computeCspStrength(cspStr) {
-  if (!cspStr) return null;
-  const issues = [];
-  const dirs = cspStr.split(';').map(d => d.trim().toLowerCase());
-  const getDir = n => dirs.find(d => d.startsWith(n)) || '';
-  const scriptSrc = getDir('script-src') || getDir('default-src');
-  if (!scriptSrc)                             issues.push('No script-src or default-src');
-  if (scriptSrc.includes("'unsafe-inline'"))  issues.push("'unsafe-inline' allows inline XSS");
-  if (scriptSrc.includes("'unsafe-eval'"))    issues.push("'unsafe-eval' allows eval() XSS");
-  if (/ \*[ ;]/.test(scriptSrc + ' '))        issues.push('Wildcard (*) in script-src');
-  if (scriptSrc.includes('data:'))            issues.push("data: URI in script-src");
-  return { score: issues.length === 0 ? 'strong' : issues.length <= 2 ? 'weak' : 'very-weak', issues };
 }
 
 // ── Accessibility ─────────────────────────────────────────────────────────────
@@ -260,7 +146,6 @@ async function detectFeatures(page) {
   });
 }
 
-// ── FPS measurement ───────────────────────────────────────────────────────────
 async function measureFPS(page) {
   try {
     const fps = await page.evaluate(() => new Promise(resolve => {
@@ -273,7 +158,6 @@ async function measureFPS(page) {
   } catch { return { fps: null, fpsStatus: 'unknown' }; }
 }
 
-// ── Multi-frame capture ───────────────────────────────────────────────────────
 async function captureFrames(page, outBase) {
   const frames = [];
   let elapsed = 0;
@@ -287,7 +171,6 @@ async function captureFrames(page, outBase) {
   return frames;
 }
 
-// ── Hover states ──────────────────────────────────────────────────────────────
 async function captureHoverStates(page, outBase) {
   const results = [];
   await page.evaluate(() => window.scrollTo(0, 0));
@@ -312,7 +195,6 @@ async function captureHoverStates(page, outBase) {
   return results;
 }
 
-// ── Scroll states ─────────────────────────────────────────────────────────────
 async function captureScrollStates(page, outBase) {
   const results = [];
   await page.evaluate(() => window.scrollTo(0, 0));
@@ -328,7 +210,6 @@ async function captureScrollStates(page, outBase) {
   return results;
 }
 
-// ── Video recording ───────────────────────────────────────────────────────────
 async function recordVideo(pageUrl, outBase, w, h) {
   const videoDir = path.dirname(outBase) || '.';
   const browser  = await chromium.launch({ headless: true });
@@ -340,7 +221,6 @@ async function recordVideo(pageUrl, outBase, w, h) {
   finally { await browser.close(); }
 }
 
-// ── Advanced checks orchestration ─────────────────────────────────────────────
 async function runAdvanced(page, outBase, detected) {
   const needsAnim   = forceAnim   || (detectAdv && (detected.hasAnimations || detected.hasGSAP || detected.hasMotion || detected.hasLottie || detected.hasSVGAnimations || detected.hasCanvas || detected.hasWebGL || detected.hasThreeJS));
   const needsHover  = forceHover  || (detectAdv && detected.hasTransitions);
@@ -359,62 +239,40 @@ async function runAdvanced(page, outBase, detected) {
 
 async function runMetaAudit(page) {
   return page.evaluate(() => {
-    const get = (sel, attr = 'content') => document.querySelector(sel)?.[attr] ?? null;
-    const title = document.title;
-    const desc  = get('meta[name="description"]');
-    const ogImg = get('meta[property="og:image"]');
-    const viewportContent = get('meta[name="viewport"]');
+    const viewportContent = document.querySelector('meta[name="viewport"]')?.content ?? null;
     const blocksZoom = viewportContent ? (
       viewportContent.includes('user-scalable=no') ||
       viewportContent.includes('user-scalable=0') ||
       /maximum-scale=[01][,\s]/.test(viewportContent) ||
       viewportContent.includes('maximum-scale=1.0')
     ) : false;
-    const structuredData = [...document.querySelectorAll('script[type="application/ld+json"]')]
-      .map(s => { try { return { type: JSON.parse(s.textContent)['@type'] || 'Unknown', parseError: null }; } catch (e) { return { type: null, parseError: e.message.slice(0, 80) }; } });
     const lang    = document.documentElement.lang || null;
     const charset = document.characterSet || null;
     const dir     = document.documentElement.dir || 'ltr';
-    const issues = [
-      !title                                    && 'Missing <title>',
-      title && title.length > 60                && `Title too long (${title.length} chars, max 60)`,
-      title && title.length < 10                && `Title too short (${title.length} chars)`,
-      !desc                                     && 'Missing meta description',
-      desc && desc.length > 160                 && `Description too long (${desc.length} chars, max 160)`,
-      !get('link[rel="canonical"]', 'href')     && 'Missing canonical link',
-      !ogImg                                    && 'Missing og:image',
-      !viewportContent                          && 'Missing viewport meta',
-      !get('meta[property="og:title"]')         && 'Missing og:title',
-      blocksZoom                                && 'Viewport blocks user zoom (WCAG 1.4.4)',
-      structuredData.some(sd => sd.parseError)  && 'JSON-LD parse error detected',
-      !lang                                     && 'Missing <html lang> attribute (WCAG 3.1.1)',
+    const issues  = [
+      blocksZoom && 'Viewport blocks user zoom (WCAG 1.4.4)',
+      !lang      && 'Missing <html lang> attribute (WCAG 3.1.1)',
     ].filter(Boolean);
     return {
-      title, description: desc,
-      canonical: get('link[rel="canonical"]', 'href'),
-      robots:    get('meta[name="robots"]'),
-      viewport:  viewportContent,
-      blocksZoom, lang, charset, dir,
-      og: { title: get('meta[property="og:title"]'), description: get('meta[property="og:description"]'), image: ogImg, url: get('meta[property="og:url"]'), type: get('meta[property="og:type"]') },
-      twitter: { card: get('meta[name="twitter:card"]'), image: get('meta[name="twitter:image"]'), title: get('meta[name="twitter:title"]') },
-      structuredData: { count: structuredData.length, types: structuredData.filter(sd => sd.type).map(sd => sd.type), parseErrors: structuredData.filter(sd => sd.parseError).map(sd => sd.parseError) },
-      issues,
+      title: document.title || null,
+      viewport: viewportContent,
+      blocksZoom, lang, charset, dir, issues,
     };
   });
 }
 
-async function runImageAudit(page, imageFormats) {
-  const imgData = await page.evaluate(() => {
+async function runImageAudit(page) {
+  return page.evaluate(() => {
     const vh = window.innerHeight;
-    return [...document.querySelectorAll('img')].map(img => {
-      const rect = img.getBoundingClientRect();
+    const imgs = [...document.querySelectorAll('img')].map(img => {
+      const rect        = img.getBoundingClientRect();
       const isAboveFold = rect.bottom <= vh && rect.top >= 0 && rect.width > 0;
       const isBelowFold = rect.top > vh;
-      const hasLazy = img.loading === 'lazy';
-      const hasFP   = img.getAttribute('fetchpriority') === 'high';
+      const hasLazy     = img.loading === 'lazy';
+      const hasFP       = img.getAttribute('fetchpriority') === 'high';
       let foldIssue = null;
-      if (isAboveFold && hasLazy)        foldIssue = 'LAZY_ABOVE_FOLD';
-      else if (isBelowFold && !hasLazy)  foldIssue = 'MISSING_LAZY';
+      if (isAboveFold && hasLazy)       foldIssue = 'LAZY_ABOVE_FOLD';
+      else if (isBelowFold && !hasLazy) foldIssue = 'MISSING_LAZY';
       return {
         src:             img.currentSrc || img.src || '',
         missingAlt:      img.alt === '' && img.getAttribute('role') !== 'presentation' && img.getAttribute('aria-hidden') !== 'true',
@@ -430,41 +288,38 @@ async function runImageAudit(page, imageFormats) {
         missingSrcset:   !img.srcset && !img.closest('picture') && img.clientWidth > 200,
       };
     });
+    const lazyAboveFold  = imgs.filter(i => i.foldIssue === 'LAZY_ABOVE_FOLD');
+    const heroCandidates = imgs.filter(i => i.isHeroCandidate);
+    const missingSrcset  = imgs.filter(i => i.missingSrcset);
+    return {
+      total:   imgs.length,
+      broken:  imgs.filter(i => i.broken).length,
+      missingAlt: imgs.filter(i => i.missingAlt).length,
+      oversized:  imgs.filter(i => i.oversized).length,
+      notLazy:    imgs.filter(i => !i.lazy && i.displayW > 100).length,
+      lazyAboveFold:        lazyAboveFold.length,
+      missingFetchPriority: heroCandidates.length,
+      missingSrcset:        missingSrcset.length,
+      details: {
+        broken:       imgs.filter(i => i.broken).map(i => i.src),
+        missingAlt:   imgs.filter(i => i.missingAlt).map(i => i.src || '(no src)'),
+        oversized:    imgs.filter(i => i.oversized).map(i => ({ src: i.src, natural: `${i.naturalW}×${i.naturalH}`, display: `${i.displayW}×${i.displayH}` })),
+        lazyAboveFold:lazyAboveFold.map(i => i.src),
+        heroMissingFP:heroCandidates.map(i => i.src),
+        missingSrcset:missingSrcset.map(i => i.src).slice(0, 5),
+      },
+      warnings: [
+        lazyAboveFold.length  > 0 && `${lazyAboveFold.length} above-fold image(s) marked lazy — hurts LCP`,
+        heroCandidates.length > 0 && `${heroCandidates.length} large above-fold image(s) missing fetchpriority="high"`,
+        missingSrcset.length  > 0 && `${missingSrcset.length} image(s) > 200px wide missing srcset`,
+      ].filter(Boolean),
+    };
   });
-  const legacyFormats   = Object.entries(imageFormats).filter(([, ct]) => ct === 'image/jpeg' || ct === 'image/png').map(([u]) => u.split('/').pop().split('?')[0]);
-  const lazyAboveFold   = imgData.filter(i => i.foldIssue === 'LAZY_ABOVE_FOLD');
-  const heroCandidates  = imgData.filter(i => i.isHeroCandidate);
-  const missingSrcset   = imgData.filter(i => i.missingSrcset);
-  return {
-    total:    imgData.length,
-    broken:   imgData.filter(i => i.broken).length,
-    missingAlt: imgData.filter(i => i.missingAlt).length,
-    oversized:  imgData.filter(i => i.oversized).length,
-    notLazy:    imgData.filter(i => !i.lazy && i.displayW > 100).length,
-    legacyFormats: legacyFormats.length,
-    lazyAboveFold: lazyAboveFold.length,
-    missingFetchPriority: heroCandidates.length,
-    missingSrcset: missingSrcset.length,
-    details: {
-      broken:       imgData.filter(i => i.broken).map(i => i.src),
-      missingAlt:   imgData.filter(i => i.missingAlt).map(i => i.src || '(no src)'),
-      oversized:    imgData.filter(i => i.oversized).map(i => ({ src: i.src, natural: `${i.naturalW}×${i.naturalH}`, display: `${i.displayW}×${i.displayH}` })),
-      lazyAboveFold:lazyAboveFold.map(i => i.src),
-      heroMissingFP:heroCandidates.map(i => i.src),
-      missingSrcset:missingSrcset.map(i => i.src).slice(0, 5),
-    },
-    warnings: [
-      lazyAboveFold.length  > 0 && `${lazyAboveFold.length} above-fold image(s) marked lazy — hurts LCP`,
-      heroCandidates.length > 0 && `${heroCandidates.length} large above-fold image(s) missing fetchpriority="high"`,
-      missingSrcset.length  > 0 && `${missingSrcset.length} image(s) > 200px wide missing srcset (no responsive images)`,
-    ].filter(Boolean),
-  };
 }
 
 async function runBundleAudit(page) {
   return page.evaluate(() => {
     const resources = performance.getEntriesByType('resource');
-    const nav       = performance.getEntriesByType('navigation')[0] || {};
     const kb = bytes => parseFloat((bytes / 1024).toFixed(1));
     const byType = type => resources.filter(r => r.initiatorType === type);
     const jsRes  = byType('script');
@@ -475,23 +330,15 @@ async function runBundleAudit(page) {
     const totalKB= kb(resources.reduce((s, r) => s + r.transferSize, 0));
     const largest = [...resources].sort((a, b) => b.decodedBodySize - a.decodedBodySize).slice(0, 3).map(r => ({ file: r.name.split('/').pop().split('?')[0] || r.name, decodedKB: kb(r.decodedBodySize), type: r.initiatorType }));
     const slowest = [...resources].filter(r => r.duration > 0).sort((a, b) => b.duration - a.duration).slice(0, 3).map(r => ({ file: r.name.split('/').pop().split('?')[0] || r.name, durationMs: Math.round(r.duration), type: r.initiatorType }));
-    // Resource hints: preconnect vs actual third-party origins
-    const preconnectOrigins = new Set([...document.querySelectorAll('link[rel="preconnect"]')].map(l => { try { return new URL(l.href).origin; } catch { return null; } }).filter(Boolean));
-    const usedThirdParty    = [...new Set(resources.map(r => { try { const o = new URL(r.name).origin; return o !== location.origin ? o : null; } catch { return null; } }).filter(Boolean))];
-    const missingPreconnect = usedThirdParty.filter(o => !preconnectOrigins.has(o)).slice(0, 5);
     return {
       totalTransferKB: totalKB, jsKB, cssKB,
       imgKB:         kb(imgRes.reduce((s, r) => s + r.transferSize, 0)),
       resourceCount: resources.length,
       cachedCount:   resources.filter(r => r.transferSize === 0 && r.decodedBodySize > 0).length,
-      protocol:      nav.nextHopProtocol || null,
-      missingPreconnect,
       largest, slowest,
       warnings: [
         totalKB > 2048 && `Total transfer ${totalKB}KB exceeds 2MB`,
         jsKB    > 512  && `JS bundle ${jsKB}KB exceeds 512KB`,
-        nav.nextHopProtocol && nav.nextHopProtocol === 'http/1.1' && 'Page served over HTTP/1.1 (upgrade to HTTP/2 for multiplexing)',
-        missingPreconnect.length > 0 && `${missingPreconnect.length} third-party origin(s) without preconnect hint`,
       ].filter(Boolean),
     };
   });
@@ -515,45 +362,25 @@ async function runFontAudit(page) {
   });
 }
 
-async function runScriptAudit(page, preConsentTrackers = []) {
-  const domAudit = await page.evaluate((TRACKERS) => {
+async function runScriptAudit(page) {
+  return page.evaluate(() => {
     const pageOrigin = location.origin;
     const scripts = [...document.querySelectorAll('script[src]')].map(s => {
       let origin;
       try { origin = new URL(s.src).origin; } catch { return null; }
-      const isThirdParty = origin !== pageOrigin;
-      const tracker = Object.entries(TRACKERS).find(([k]) => s.src.includes(k));
-      return { src: s.src.slice(0, 100), origin, isThirdParty, trackerName: tracker?.[1] || null, hasSRI: !!s.integrity, isAsync: s.async, isDefer: s.defer, isModule: s.type === 'module' };
+      return { isThirdParty: origin !== pageOrigin, isAsync: s.async, isDefer: s.defer, isModule: s.type === 'module' };
     }).filter(Boolean);
-    const stylesheets = [...document.querySelectorAll('link[rel="stylesheet"][href]')].map(l => {
-      let origin;
-      try { origin = new URL(l.href).origin; } catch { return null; }
-      if (origin === pageOrigin) return null;
-      return { href: l.href.slice(0, 100), hasSRI: !!l.integrity };
-    }).filter(Boolean);
-    const thirdParty      = scripts.filter(s => s.isThirdParty);
-    const missingSRI      = thirdParty.filter(s => !s.hasSRI);
-    const renderBlocking  = thirdParty.filter(s => !s.isAsync && !s.isDefer && !s.isModule);
-    const trackers        = [...new Set(thirdParty.filter(s => s.trackerName).map(s => s.trackerName))];
-    const stylesheetsSRI  = stylesheets.filter(s => !s.hasSRI).length;
+    const thirdParty     = scripts.filter(s => s.isThirdParty);
+    const renderBlocking = thirdParty.filter(s => !s.isAsync && !s.isDefer && !s.isModule);
     return {
-      total: scripts.length, thirdPartyCount: thirdParty.length,
-      missingSRI: missingSRI.length, renderBlocking: renderBlocking.length,
-      trackers, stylesheetsMissingSRI: stylesheetsSRI,
-      warnings: [
-        missingSRI.length   > 0 && `${missingSRI.length} third-party script(s) missing SRI hash`,
-        renderBlocking.length>0 && `${renderBlocking.length} render-blocking third-party script(s)`,
-        stylesheetsSRI      > 0 && `${stylesheetsSRI} third-party stylesheet(s) missing SRI`,
-      ].filter(Boolean),
-      details: thirdParty.slice(0, 10),
+      total:           scripts.length,
+      thirdPartyCount: thirdParty.length,
+      renderBlocking:  renderBlocking.length,
+      warnings: renderBlocking.length > 0
+        ? [`${renderBlocking.length} render-blocking third-party script(s) delay page display`]
+        : [],
     };
-  }, TRACKER_DOMAINS);
-  // Merge pre-consent tracker calls (network-level, captured by response tracking)
-  domAudit.preConsentTrackers = [...new Set(preConsentTrackers.map(t => t.name))];
-  if (domAudit.preConsentTrackers.length > 0 && !domAudit.warnings.includes('pre-consent')) {
-    domAudit.warnings.push(`${domAudit.preConsentTrackers.length} tracker(s) fire at load time before user consent`);
-  }
-  return domAudit;
+  });
 }
 
 async function runTouchTargetAudit(page) {
@@ -580,8 +407,8 @@ async function runHeadingAudit(page) {
     return {
       h1Count, totalHeadings: els.length, skips,
       warnings: [
-        h1Count === 0   && 'No <h1> found (WCAG 2.4.6)',
-        h1Count > 1     && `${h1Count} <h1> elements — should be one per page`,
+        h1Count === 0    && 'No <h1> found (WCAG 2.4.6)',
+        h1Count > 1      && `${h1Count} <h1> elements — should be one per page`,
         skips.length > 0 && `Heading level skip(s): ${skips.join(', ')}`,
       ].filter(Boolean),
     };
@@ -590,7 +417,6 @@ async function runHeadingAudit(page) {
 
 async function runDomA11yAudit(page) {
   return page.evaluate(() => {
-    // Broken ARIA ID references
     const ARIA_REF_ATTRS = ['aria-labelledby','aria-describedby','aria-controls','aria-owns','aria-activedescendant'];
     const allIds = new Set([...document.querySelectorAll('[id]')].map(el => el.id));
     const brokenAriaRefs = [];
@@ -603,7 +429,6 @@ async function runDomA11yAudit(page) {
         }
       }
     });
-    // Unlabeled inputs
     const inputs = [...document.querySelectorAll('input:not([type=hidden]):not([type=button]):not([type=submit]):not([type=reset]):not([type=image]),select,textarea')];
     const unlabeled = inputs.filter(inp => {
       if (inp.getAttribute('aria-label') || inp.getAttribute('aria-labelledby')) return false;
@@ -616,24 +441,9 @@ async function runDomA11yAudit(page) {
       brokenAriaRefs: brokenAriaRefs.slice(0, 10),
       unlabeledInputs: unlabeled.length,
       warnings: [
-        brokenAriaRefs.length > 0 && `${brokenAriaRefs.length} broken ARIA reference(s) (ID not found in DOM)`,
+        brokenAriaRefs.length > 0 && `${brokenAriaRefs.length} broken ARIA reference(s)`,
         unlabeled.length > 0      && `${unlabeled.length} form input(s) missing accessible label (WCAG 1.3.1)`,
       ].filter(Boolean),
-    };
-  });
-}
-
-async function runLinksAudit(page) {
-  return page.evaluate(() => {
-    const GENERIC = new Set(['click here','here','read more','more','learn more','this link','link','this','details','info','information','click','go']);
-    const generic = [...document.querySelectorAll('a[href]')]
-      .map(a => { const t = (a.textContent || a.getAttribute('aria-label') || '').trim().toLowerCase(); return { text: t, href: a.href }; })
-      .filter(l => GENERIC.has(l.text) || (l.text.length > 0 && l.text.length < 4))
-      .slice(0, 10);
-    return {
-      genericAnchorText: generic.length,
-      warnings: generic.length > 0 ? [`${generic.length} link(s) with generic anchor text (hurts SEO + screen readers)`] : [],
-      details: generic,
     };
   });
 }
@@ -654,20 +464,6 @@ async function runLayoutAudit(page) {
   });
 }
 
-async function getCSSCoverage(page) {
-  const coverage = await page.coverage.stopCSSCoverage();
-  let totalBytes = 0, usedBytes = 0;
-  const sheets = [];
-  for (const entry of coverage) {
-    const entryUsed = entry.ranges.reduce((s, r) => s + (r.end - r.start), 0);
-    totalBytes += entry.text.length;
-    usedBytes  += entryUsed;
-    sheets.push({ url: entry.url.split('/').pop().split('?')[0] || entry.url, totalKB: parseFloat((entry.text.length / 1024).toFixed(1)), usedKB: parseFloat((entryUsed / 1024).toFixed(1)), usedPct: entry.text.length ? Math.round(entryUsed / entry.text.length * 100) : 100 });
-  }
-  const unusedPct = totalBytes ? parseFloat(((totalBytes - usedBytes) / totalBytes * 100).toFixed(1)) : 0;
-  return { totalKB: parseFloat((totalBytes / 1024).toFixed(1)), usedKB: parseFloat((usedBytes / 1024).toFixed(1)), unusedPct, sheetsCount: coverage.length, warnings: unusedPct > 70 ? [`${unusedPct}% of CSS unused on initial load`] : [], sheets: sheets.sort((a, b) => b.totalKB - a.totalKB).slice(0, 5) };
-}
-
 async function installCWVObserver(page) {
   await page.addInitScript(() => {
     window.__vitals = { cls: 0, shifts: [], longTasks: [] };
@@ -679,7 +475,7 @@ async function installCWVObserver(page) {
           if (e.sources) {
             for (const src of e.sources) {
               if (src.node) {
-                try { window.__vitals.shifts.push({ value: parseFloat(e.value.toFixed(4)), startTime: Math.round(e.startTime), element: { tag: src.node.tagName, id: src.node.id || null, class: (src.node.className || '').split(' ').filter(Boolean)[0] || null, prevRect: src.previousRect ? { x: Math.round(src.previousRect.x), y: Math.round(src.previousRect.y), w: Math.round(src.previousRect.width), h: Math.round(src.previousRect.height) } : null, currRect: src.currentRect  ? { x: Math.round(src.currentRect.x),  y: Math.round(src.currentRect.y),  w: Math.round(src.currentRect.width),  h: Math.round(src.currentRect.height)  } : null } }); } catch {}
+                try { window.__vitals.shifts.push({ value: parseFloat(e.value.toFixed(4)), startTime: Math.round(e.startTime), element: { tag: src.node.tagName, id: src.node.id || null, class: (src.node.className || '').split(' ').filter(Boolean)[0] || null, prevRect: src.previousRect ? { x: Math.round(src.previousRect.x), y: Math.round(src.previousRect.y), w: Math.round(src.previousRect.width), h: Math.round(src.previousRect.height) } : null, currRect: src.currentRect ? { x: Math.round(src.currentRect.x), y: Math.round(src.currentRect.y), w: Math.round(src.currentRect.width), h: Math.round(src.currentRect.height) } : null } }); } catch {}
               }
             }
           }
@@ -761,7 +557,7 @@ async function captureNoJS(browser, pageUrl, outBase, w, h) {
   await noJsPage.setViewportSize({ width: w, height: h });
   try {
     await noJsPage.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
-    const noJsPath     = outBase + '-no-js.png';
+    const noJsPath      = outBase + '-no-js.png';
     await noJsPage.screenshot({ path: noJsPath, fullPage: false });
     const contentLength = await noJsPage.evaluate(() => document.body.innerText.trim().length);
     const hasContent    = contentLength > 100;
@@ -793,46 +589,6 @@ async function runFocusAuditFn(page, outBase) {
   return { tabStopsTested: focusResults.length, missingFocusRing: missing.length, focusRingPct: focusResults.length > 0 ? Math.round((1 - missing.length / focusResults.length) * 100) : 100, warnings: missing.length > 0 ? [`${missing.length}/${focusResults.length} focusable elements have no visible focus ring (WCAG 2.4.7)`] : [], details: focusResults };
 }
 
-async function runPWAAudit(page) {
-  const manifestHref = await page.evaluate(() => document.querySelector('link[rel="manifest"]')?.href || null);
-  if (!manifestHref) return { hasManifest: false, warnings: ['No <link rel="manifest"> found'] };
-  try {
-    const manifest = await page.evaluate(async (url) => { const r = await fetch(url); if (!r.ok) return { error: `HTTP ${r.status}` }; return r.json(); }, manifestHref);
-    if (manifest.error) return { hasManifest: true, error: manifest.error, warnings: [`Manifest fetch failed: ${manifest.error}`] };
-    const issues = [];
-    if (!manifest.name && !manifest.short_name)                                   issues.push('Missing name or short_name');
-    if (!manifest.start_url)                                                       issues.push('Missing start_url');
-    if (!manifest.display)                                                         issues.push('Missing display mode');
-    const icons = manifest.icons || [];
-    if (!icons.some(i => (i.sizes || '').includes('192')))                        issues.push('Missing 192×192 icon');
-    if (!icons.some(i => (i.sizes || '').includes('512')))                        issues.push('Missing 512×512 icon');
-    const hasSW = await page.evaluate(async () => { try { const r = await navigator.serviceWorker?.getRegistrations(); return (r?.length || 0) > 0; } catch { return false; } });
-    return { hasManifest: true, name: manifest.name || manifest.short_name || null, display: manifest.display || null, startUrl: manifest.start_url || null, iconCount: icons.length, hasServiceWorker: hasSW, issues, warnings: issues };
-  } catch (e) { return { hasManifest: true, error: e.message, warnings: [e.message] }; }
-}
-
-function checkBudget(bundle) {
-  if (!anyBudget) return null;
-  const exceeded = [
-    budgetJs    && bundle.jsKB           > budgetJs    && `JS ${bundle.jsKB}KB exceeds ${budgetJs}KB budget`,
-    budgetCss   && bundle.cssKB          > budgetCss   && `CSS ${bundle.cssKB}KB exceeds ${budgetCss}KB budget`,
-    budgetTotal && bundle.totalTransferKB> budgetTotal && `Total ${bundle.totalTransferKB}KB exceeds ${budgetTotal}KB budget`,
-    budgetReqs  && bundle.resourceCount  > budgetReqs  && `${bundle.resourceCount} requests exceeds ${budgetReqs} budget`,
-  ].filter(Boolean);
-  return { budgets: { js: budgetJs, css: budgetCss, total: budgetTotal, requests: budgetReqs }, exceeded, passed: exceeded.length === 0 };
-}
-
-async function runImageFormatCheck(page, imageFormats) {
-  const legacyUrls = Object.entries(imageFormats).filter(([, ct]) => ct === 'image/jpeg' || ct === 'image/png').map(([u]) => u).slice(0, 5);
-  if (legacyUrls.length === 0) return { checked: 0, supportsModern: [], noModernSupport: [], warnings: [] };
-  const results = await page.evaluate(async (urls) => Promise.all(urls.map(async url => {
-    try { const r = await fetch(url, { method: 'GET', headers: { Accept: 'image/avif,image/webp,*/*;q=0.8' }, cache: 'no-store' }); const ct = r.headers.get('content-type') || ''; return { url: url.split('/').pop().split('?')[0].slice(0, 50), served: ct, supportsModern: ct.includes('avif') || ct.includes('webp') }; }
-    catch (e) { return { url: url.slice(0, 50), error: e.message, supportsModern: false }; }
-  })), legacyUrls);
-  const noModern = results.filter(r => !r.supportsModern && !r.error);
-  return { checked: results.length, supportsModern: results.filter(r => r.supportsModern).map(r => r.url), noModernSupport: noModern.map(r => r.url), warnings: noModern.length > 0 ? [`${noModern.length} image(s) not served as WebP/AVIF when browser requests them`] : [] };
-}
-
 async function runLinkCheck(page) {
   const internalLinks = await page.evaluate(() => {
     const seen = new Set();
@@ -847,34 +603,6 @@ async function runLinkCheck(page) {
   })), internalLinks);
   const broken = results.filter(r => !r.ok);
   return { checked: results.length, broken: broken.length, warnings: broken.length > 0 ? [`${broken.length} broken internal link(s)`] : [], details: broken.map(r => ({ url: r.url, status: r.status })) };
-}
-
-async function runSEODeepAudit(page) {
-  return page.evaluate(async () => {
-    const results = { warnings: [] };
-    // robots.txt
-    try {
-      const r    = await fetch(new URL('/robots.txt', location.href).href);
-      const text = await r.text();
-      const lines = text.split('\n').map(l => l.trim().toLowerCase());
-      const blockAll    = lines.some(l => l === 'disallow: /');
-      const sitemapLine = text.split('\n').find(l => l.trim().toLowerCase().startsWith('sitemap:'));
-      const sitemapUrl  = sitemapLine ? sitemapLine.split(':').slice(1).join(':').trim() : null;
-      results.robotsTxt = { found: r.ok, blockAll, sitemapDeclared: !!sitemapUrl, sitemapUrl };
-      if (blockAll)       results.warnings.push('robots.txt blocks all crawlers (Disallow: /)');
-      if (!sitemapUrl)    results.warnings.push('No sitemap declared in robots.txt');
-      if (sitemapUrl) {
-        try { const sr = await fetch(sitemapUrl); results.sitemap = { found: sr.ok, status: sr.status, url: sitemapUrl }; if (!sr.ok) results.warnings.push(`Sitemap not accessible (HTTP ${sr.status})`); }
-        catch { results.sitemap = { found: false, url: sitemapUrl }; results.warnings.push('Sitemap URL declared but unreachable'); }
-      }
-    } catch { results.robotsTxt = { found: false }; results.warnings.push('robots.txt not found'); }
-    // hreflang
-    const hreflangLinks = [...document.querySelectorAll('link[rel="alternate"][hreflang]')].map(l => ({ lang: l.hreflang, href: l.href }));
-    const hasXDefault   = hreflangLinks.some(l => l.lang === 'x-default');
-    results.hreflang = { count: hreflangLinks.length, hasXDefault: hreflangLinks.length > 0 ? hasXDefault : null };
-    if (hreflangLinks.length > 0 && !hasXDefault) results.warnings.push('hreflang set but missing x-default fallback');
-    return results;
-  });
 }
 
 async function compareScreenshots(currentPath, baselinePath) {
@@ -930,49 +658,26 @@ function routeSlug(route) {
 
 // ── Shared full-page audit ────────────────────────────────────────────────────
 async function runFullAudit(page, outPath, outBase, tracker) {
-  const preConsentTrackers = tracker.getPreConsentTrackers();
-  const [meta, images, scripts, touchTargets, headings, domA11y, links, layout, bundle, fonts] = await Promise.all([
+  const [meta, images, scripts, touchTargets, headings, domA11y, layout, bundle, fonts] = await Promise.all([
     runMetaAudit(page),
-    runImageAudit(page, tracker.getImageFormats()),
-    runScriptAudit(page, preConsentTrackers),
+    runImageAudit(page),
+    runScriptAudit(page),
     runTouchTargetAudit(page),
     runHeadingAudit(page),
     runDomA11yAudit(page),
-    runLinksAudit(page),
     runLayoutAudit(page),
     runBundleAudit(page),
     runFontAudit(page),
   ]);
 
-  // Compose security headers + enrichments
-  const securityHeaders = tracker.getSecurityHeaders();
-  if (securityHeaders) {
-    securityHeaders.cspStrength        = computeCspStrength(securityHeaders.csp);
-    securityHeaders.mixedContent       = tracker.getMixedContent();
-    securityHeaders.unsandboxedIframes = await page.evaluate(() =>
-      [...document.querySelectorAll('iframe')].filter(f => {
-        if (f.getAttribute('sandbox') !== null) return false;
-        try { return new URL(f.src).origin !== location.origin; } catch { return false; }
-      }).map(f => f.src.slice(0, 80))
-    );
-    if (securityHeaders.mixedContent.length > 0) securityHeaders.missing.push('mixed-content');
-  }
-
-  const cookiesInsecure = tracker.getCookiesInsecure();
-  const cookies = { insecureCount: cookiesInsecure.length, details: cookiesInsecure.slice(0, 10), warnings: cookiesInsecure.length > 0 ? [`${cookiesInsecure.length} cookie(s) missing Secure/SameSite flags`] : [] };
-
   const redirectChain = tracker.getRedirectChain();
 
-  // Budget check (Node-only)
-  const budget = anyBudget ? checkBudget(bundle) : undefined;
-
-  // Flag-gated: dark mode + axe in dark
   let darkMode_, darkModeA11y_;
   if (darkMode) {
-    const darkOut_ = await captureDarkMode(page, outPath, true);
-    const dmA11y   = await runAxe(page);
+    const darkOut = await captureDarkMode(page, outPath, true);
+    const dmA11y  = await runAxe(page);
     await page.emulateMedia({ colorScheme: 'light' });
-    darkMode_     = { out: darkOut_ };
+    darkMode_     = { out: darkOut };
     darkModeA11y_ = dmA11y;
   }
 
@@ -981,34 +686,17 @@ async function runFullAudit(page, outPath, outBase, tracker) {
   if (forcedColors)  forcedColors_  = { out: await captureForcedColors(page, outPath)  };
   if (printLayout)   print_         = { out: await capturePrintLayout(page, outPath)   };
 
-  // PWA audit
-  let pwa;
-  if (pwaMode) pwa = await runPWAAudit(page);
-
-  // Image format content negotiation
-  let imgFormat;
-  if (imgFormatMode) imgFormat = await runImageFormatCheck(page, tracker.getImageFormats());
-
-  // SEO deep audit
-  let seoDeep;
-  if (seoDeepMode) seoDeep = await runSEODeepAudit(page);
-
-  // Link check (modifies page state via fetch — run after screenshots)
   let linkCheck;
   if (linkCheckMode) linkCheck = await runLinkCheck(page);
 
   return {
-    meta, images, scripts, touchTargets, headings, domA11y, links, layout, bundle, fonts, cookies, securityHeaders,
+    meta, images, scripts, touchTargets, headings, domA11y, layout, bundle, fonts,
     ...(redirectChain.length > 0 && { redirects: redirectChain }),
-    ...(budget        && { budget }),
     ...(darkMode_     && { darkMode: darkMode_ }),
     ...(darkModeA11y_ && { darkModeA11y: darkModeA11y_ }),
     ...(reducedMotion_&& { reducedMotion: reducedMotion_ }),
     ...(forcedColors_ && { forcedColors: forcedColors_ }),
     ...(print_        && { print: print_ }),
-    ...(pwa           && { pwa }),
-    ...(imgFormat     && { imgFormat }),
-    ...(seoDeep       && { seoDeep }),
     ...(linkCheck     && { linkCheck }),
   };
 }
@@ -1020,11 +708,7 @@ async function singlePage() {
   if (outDir && outDir !== '.' && !fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
   const browser = await chromium.launch({ headless: true });
-
-  const contextOpts = {};
-  let harPath;
-  if (harCapture) { harPath = outBase + '.har'; contextOpts.recordHar = { path: harPath, mode: 'minimal' }; }
-  const context = await browser.newContext(contextOpts);
+  const context = await browser.newContext();
   const page    = await context.newPage();
 
   const errors = [];
@@ -1033,7 +717,6 @@ async function singlePage() {
 
   const tracker = url !== 'about:blank' ? setupResponseTracking(page) : null;
   if (cwvMode && url !== 'about:blank') await installCWVObserver(page);
-  if (cssCoverage) await page.coverage.startCSSCoverage();
 
   if (url === 'about:blank') {
     await page.setContent('<h1 style="font-family:sans-serif;color:green">Playwright E2E OK</h1>');
@@ -1042,9 +725,6 @@ async function singlePage() {
   }
 
   await page.screenshot({ path: outArg, fullPage: false });
-
-  let css;
-  if (cssCoverage) css = await getCSSCoverage(page);
 
   let diff;
   if (comparePath) {
@@ -1076,10 +756,8 @@ async function singlePage() {
   const result = { ok: true, url, out: outArg, width, height, consoleErrors: errors, a11y };
   Object.assign(result, auditResult);
   if (advanced)         result.advanced   = advanced;
-  if (css)              result.css        = css;
   if (cwv)              result.cwv        = cwv;
   if (diff)             result.diff       = diff;
-  if (harPath)          result.harPath    = harPath;
   if (noJs)             result.noJs       = noJs;
   if (focusAuditResult) result.focusAudit = focusAuditResult;
 
@@ -1095,12 +773,9 @@ async function pageChecks(page, pageUrl, outPath, route) {
   try {
     await page.setViewportSize({ width, height });
     if (cwvMode) await installCWVObserver(page);
-    if (cssCoverage) await page.coverage.startCSSCoverage();
     await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.screenshot({ path: outPath, fullPage: false });
-    let css;
-    if (cssCoverage) css = await getCSSCoverage(page);
-    const a11y       = await runAxe(page);
+    const a11y        = await runAxe(page);
     let advanced;
     if (anyAdvFlag) { const detected = await detectFeatures(page); advanced = await runAdvanced(page, outPath.replace(/\.png$/i, ''), detected); }
     const auditResult = await runFullAudit(page, outPath, outPath.replace(/\.png$/i, ''), tracker);
@@ -1111,7 +786,6 @@ async function pageChecks(page, pageUrl, outPath, route) {
     const entry = { ok: true, url: pageUrl, route, out: outPath, width, height, consoleErrors: errors, a11y };
     Object.assign(entry, auditResult);
     if (advanced)         entry.advanced   = advanced;
-    if (css)              entry.css        = css;
     if (cwv)              entry.cwv        = cwv;
     if (focusAuditResult) entry.focusAudit = focusAuditResult;
     return entry;
@@ -1128,13 +802,9 @@ async function multiPage() {
   const outDir = path.dirname(prefix);
   if (outDir && !fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
-  const browser = await chromium.launch({ headless: true });
-  const contextOpts = {};
-  let harPath;
-  if (harCapture) { harPath = prefix + '-multipage.har'; contextOpts.recordHar = { path: harPath, mode: 'minimal' }; }
-  const sharedContext = await browser.newContext(contextOpts);
-
-  const results = [];
+  const browser       = await chromium.launch({ headless: true });
+  const sharedContext = await browser.newContext();
+  const results       = [];
 
   if (navStrat === 'tab-click') {
     const page = await sharedContext.newPage();
@@ -1199,7 +869,6 @@ async function multiPage() {
   await sharedContext.close();
   await browser.close();
 
-  if (harPath) results.forEach(r => { if (r.ok) r.harPath = harPath; });
   process.stdout.write(JSON.stringify(results) + '\n');
 }
 
