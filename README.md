@@ -64,7 +64,7 @@ flowchart LR
 <td width="50%">
 
 **Quality**
-- Lighthouse: performance, accessibility, best practices, SEO
+- Lighthouse: performance + accessibility
 - axe-core accessibility violations
 - Console JS errors & warnings
 - Network 4xx / 5xx failures
@@ -93,7 +93,7 @@ flowchart LR
 
 ### Always included in every `pw-e2e-test.js` JSON output
 
-Every screenshot run (hook or manual) now includes these zero-overhead audits:
+Every screenshot run (hook or manual) includes these zero-overhead audits:
 
 | Field | What it reports |
 |---|---|
@@ -103,18 +103,23 @@ Every screenshot run (hook or manual) now includes these zero-overhead audits:
 | `touchTargets` | Interactive elements below **24×24px** (WCAG 2.5.8 AA) — `failingAA` count + element details |
 | `headings` | `h1Count`, heading **level skips** (h2→h4 etc.), `warnings[]` (WCAG 2.4.6) |
 | `domA11y` | **Broken ARIA ID references** (`aria-labelledby` etc.); **unlabeled form inputs** (WCAG 1.3.1) |
-| `layout` | **Horizontal scroll** / viewport overflow — `hasHorizontalScroll`, `excessPx`, `wideElements[]` |
-| `bundle` | JS / CSS / image KB; largest + slowest resources; `warnings[]` for JS > 512KB or total > 2MB |
+| `layout` | **Horizontal scroll** / viewport overflow — `hasHorizontalScroll`, `wideElements[]`; **overflow-hidden clipping** — `hiddenOverflowElements[]` |
+| `bundle` | JS / CSS / image KB; largest + slowest resources |
 | `fonts` | Loaded/failed fonts, FOIT risk (`font-display: auto/block`), FOUT risk (`swap`) |
-| `redirects` | **Redirect chain** detected during navigation (3xx) — only present when redirects occur |
+| `typography` | Font-size < 16px on mobile (triggers iOS auto-zoom); line-height < 1.2 (WCAG 1.4.12); `text-overflow:ellipsis` truncation |
+| `interactiveStates` | CSS `:hover` / `:focus` / `:disabled` rule counts — flags missing interactive state styles |
+| `cursor` | Interactive elements missing `cursor:pointer` — users get no click affordance |
+| `viewportUnits` | CSS rules using `height:100vh` — clipped by mobile browser chrome (use `dvh` instead) |
+| `mediaQuerySupport` | Whether CSS contains `prefers-color-scheme: dark` and `prefers-reduced-motion: reduce` media queries |
+| `formUX` | `email`/`password`/`tel` inputs missing `autocomplete` — mobile autofill won't work |
+| `animationDurations` | Transitions > 300ms (sluggish hover/focus); animations > 1s (feels slow) |
+| `stacking` | Elements with `z-index > 9999` — likely copy-pasted modal fixes causing stacking anomalies |
 
 **Optional flag-gated checks:**
 
 | Flag | What it adds | Overhead |
 |---|---|---|
 | `--dark-mode` | Extra screenshot + **axe-core run** with `prefers-color-scheme: dark` → `darkMode.out` + `darkModeA11y` | ~300ms |
-| `--css-coverage` | Unused CSS % per stylesheet (Playwright built-in) → `css` | ~0ms |
-| `--har` | Full network HAR file (`<outBase>.har`) for waterfall analysis → `harPath` | ~0ms |
 | `--cwv` | Core Web Vitals: LCP / **CLS+sources** / FCP / TTFB / **TBT** with ratings | ~5-8s |
 | `--compare=<path>` | Pixel-diff vs baseline PNG; diff PNG written to disk; auto-creates baseline on first run | ~50ms |
 | `--reduced-motion` | Extra screenshot with `prefers-reduced-motion: reduce` (WCAG 2.3.3) → `reducedMotion.out` | ~200ms |
@@ -123,6 +128,10 @@ Every screenshot run (hook or manual) now includes these zero-overhead audits:
 | `--no-js` | Screenshot with JavaScript **disabled** — flags blank SPAs without SSR → `noJs` | ~2s |
 | `--focus-audit` | Tab through up to 20 focusable elements; flags **missing focus rings** (WCAG 2.4.7) → `focusAudit` | ~3-5s |
 | `--link-check` | HEAD-checks all internal links (cap 20); flags broken ones → `linkCheck` | ~3-10s |
+| `--reflow` | 320px viewport screenshot + horizontal scroll check (WCAG 1.4.10 Reflow) → `reflow` | ~2s |
+| `--text-spacing` | Inject WCAG 1.4.12 overrides; screenshot + detect clipped text → `textSpacing` | ~500ms |
+| `--paint-complexity` | Detect expensive `filter`/`backdrop-filter`/multi-shadow on large elements → `paintComplexity` | ~100ms |
+| `--state-contrast` | WCAG 1.4.3 contrast ratio in default + hover state for buttons and links → `stateContrast` | ~2-5s |
 
 ---
 
@@ -215,8 +224,7 @@ pwsh -File ~/.claude/scripts/sweep-all.ps1 -Fix
 # Schedule automatic nightly sweeps (Windows Task Scheduler)
 pwsh -File ~/.claude/scripts/schedule-sweep.ps1
 
-# Screenshot a URL manually (outputs JSON + PNG)
-# Always includes: meta/OG audit, image quality, bundle sizes, fonts, security headers
+# Screenshot a URL manually (outputs JSON + PNG with full UI/UX audit)
 node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800
 
 # Multi-page: screenshot every route/tab
@@ -234,8 +242,6 @@ node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out 1280 800 --video
 
 # Extended checks (combinable with any of the above)
 node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --dark-mode         # dark mode screenshot + axe in dark
-node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --css-coverage      # unused CSS % per stylesheet
-node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --har               # save network HAR file
 node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --cwv               # Core Web Vitals (LCP/CLS+sources/FCP/TTFB/TBT)
 node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --compare=base.png  # pixel-diff vs baseline
 node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --reduced-motion    # prefers-reduced-motion screenshot (WCAG 2.3.3)
@@ -244,6 +250,10 @@ node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --p
 node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --no-js             # JS-disabled screenshot (SSR/progressive enhancement check)
 node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --focus-audit       # keyboard focus ring visibility audit
 node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --link-check        # broken internal link check (cap 20)
+node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --reflow            # WCAG 1.4.10 reflow at 320px viewport
+node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --text-spacing      # WCAG 1.4.12 text-spacing override clipping check
+node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --paint-complexity  # expensive CSS paint properties on large elements
+node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --state-contrast    # WCAG 1.4.3 contrast in default + hover state
 ```
 
 ---

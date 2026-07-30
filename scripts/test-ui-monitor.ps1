@@ -783,10 +783,6 @@ if ((Test-Path $e2eScript18) -and (Test-Path $nm18)) {
     Assert "pw-e2e-test: TBT computed in runCWV"          ($src18 -match 'tbt\b')
     Assert "pw-e2e-test: clsSources in CWV output"        ($src18 -match 'clsSources')
 
-    # Redirect chain in setupResponseTracking
-    Assert "pw-e2e-test: redirectChain tracking in setupResponseTracking" ($src18 -match 'redirectChain\.push')
-    Assert "pw-e2e-test: getRedirectChain closure exported"               ($src18 -match 'getRedirectChain')
-
     # blocksZoom in runMetaAudit
     Assert "pw-e2e-test: blocksZoom check in runMetaAudit"         ($src18 -match 'blocksZoom')
 
@@ -850,8 +846,6 @@ if ((Test-Path $e2eScript18) -and (Test-Path $nm18)) {
     Assert "real URL s18: meta.blocksZoom is defined"                  ($j18 -and $j18.meta.PSObject.Properties['blocksZoom'])
     Assert "real URL s18: images.lazyAboveFold is a number"            ($j18 -and $j18.images.PSObject.Properties['lazyAboveFold'])
     Assert "real URL s18: images.missingFetchPriority is a number"     ($j18 -and $j18.images.PSObject.Properties['missingFetchPriority'])
-    Assert "real URL s18: redirects absent on non-redirect page"       ($j18 -and -not $j18.PSObject.Properties['redirects'])
-
     # --cwv: TBT + CLS sources
     $ss18Cwv = "$env:TEMP\s18-cwv.png"
     $r18Cwv  = (node $e2eScript18 $t18Url $ss18Cwv 1280 800 --cwv 2>$null) -join ''
@@ -918,8 +912,8 @@ if ((Test-Path $e2eScript18) -and (Test-Path $nm18)) {
     Warn "E2E script or node_modules missing — skipping new feature tests (Section 18)"
 }
 
-# ── 19. New always-on UX fields (headings, domA11y, layout, meta.lang, missingSrcset) ──
-Write-Host "`n── 19. New UX audit fields ────────────────────────────────────" -ForegroundColor Cyan
+# ── 19. New UX audit fields + new flag-gated checks ──────────────────────────
+Write-Host "`n── 19. New UX audit fields + new flag-gated checks ────────────" -ForegroundColor Cyan
 
 $e2eScript19 = "$SCRIPTS\pw-e2e-test.js"
 $nm19        = "$SCRIPTS\node_modules"
@@ -927,7 +921,7 @@ $nm19        = "$SCRIPTS\node_modules"
 if ((Test-Path $e2eScript19) -and (Test-Path $nm19)) {
     $src19 = Get-Content $e2eScript19 -Raw
 
-    # Source-level: new UX audit functions
+    # Source-level: existing audit functions
     Assert "pw-e2e-test: runHeadingAudit function defined"    ($src19 -match 'async function runHeadingAudit')
     Assert "pw-e2e-test: runDomA11yAudit function defined"    ($src19 -match 'async function runDomA11yAudit')
     Assert "pw-e2e-test: runLayoutAudit function defined"     ($src19 -match 'async function runLayoutAudit')
@@ -936,6 +930,27 @@ if ((Test-Path $e2eScript19) -and (Test-Path $nm19)) {
     Assert "pw-e2e-test: meta.lang in runMetaAudit"          ($src19 -match "document\.documentElement\.lang")
     Assert "pw-e2e-test: meta.charset in runMetaAudit"       ($src19 -match "document\.characterSet")
     Assert "pw-e2e-test: missingSrcset in runImageAudit"     ($src19 -match 'missingSrcset')
+
+    # Source-level: new always-on functions
+    Assert "pw-e2e-test: runTypographyAudit defined"         ($src19 -match 'async function runTypographyAudit')
+    Assert "pw-e2e-test: runInteractiveStateAudit defined"   ($src19 -match 'async function runInteractiveStateAudit')
+    Assert "pw-e2e-test: runCursorAudit defined"             ($src19 -match 'async function runCursorAudit')
+    Assert "pw-e2e-test: runViewportUnitsAudit defined"      ($src19 -match 'async function runViewportUnitsAudit')
+    Assert "pw-e2e-test: runMediaQueryAudit defined"         ($src19 -match 'async function runMediaQueryAudit')
+    Assert "pw-e2e-test: runFormUXAudit defined"             ($src19 -match 'async function runFormUXAudit')
+    Assert "pw-e2e-test: runAnimationDurationAudit defined"  ($src19 -match 'async function runAnimationDurationAudit')
+    Assert "pw-e2e-test: runStackingAudit defined"           ($src19 -match 'async function runStackingAudit')
+    Assert "pw-e2e-test: hiddenOverflowElements in layout"   ($src19 -match 'hiddenOverflowElements')
+
+    # Source-level: new flag-gated functions
+    Assert "pw-e2e-test: captureReflow defined"              ($src19 -match 'async function captureReflow')
+    Assert "pw-e2e-test: captureTextSpacing defined"         ($src19 -match 'async function captureTextSpacing')
+    Assert "pw-e2e-test: runPaintComplexityAudit defined"    ($src19 -match 'async function runPaintComplexityAudit')
+    Assert "pw-e2e-test: runStateContrastAudit defined"      ($src19 -match 'async function runStateContrastAudit')
+    Assert "pw-e2e-test: --reflow flag handled"             ($src19 -match "reflowMode\s*=\s*flags\['reflow'\]")
+    Assert "pw-e2e-test: --text-spacing flag handled"       ($src19 -match "textSpacingMode\s*=\s*flags\['text-spacing'\]")
+    Assert "pw-e2e-test: --paint-complexity flag handled"   ($src19 -match "paintComplexity\s*=\s*flags\['paint-complexity'\]")
+    Assert "pw-e2e-test: --state-contrast flag handled"     ($src19 -match "stateContrast\s*=\s*flags\['state-contrast'\]")
 
     # Live URL tests
     $t19Port = 19994
@@ -948,16 +963,29 @@ if ((Test-Path $e2eScript19) -and (Test-Path $nm19)) {
   <meta charset="UTF-8">
   <title>Section 19 Test Page</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    .hero      { height: 100vh; background: #333; color: #fff; }
+    .ticker    { transition-duration: 500ms; color: #444; }
+    .clip-box  { width: 200px; height: 50px; overflow: hidden; }
+    button     { cursor: default; }
+    button:hover { background: #ddd; }
+  </style>
 </head>
 <body>
   <h1>Section 19 Heading 1</h1>
   <h2>Sub heading</h2>
   <h4>Skip from h2 to h4</h4>
   <button style="width:80px;height:40px">Action</button>
+  <a href="/page2">Internal link</a>
   <img src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==" alt="1px dot" width="300" height="200">
   <input type="text" placeholder="Unlabeled input">
   <label for="namedInput">Name</label>
   <input type="text" id="namedInput">
+  <input type="email" placeholder="your@email.com">
+  <p style="text-overflow:ellipsis;overflow:hidden;white-space:nowrap;width:80px">Very long text that will be truncated by ellipsis</p>
+  <div class="clip-box"><p>Line 1</p><p>Line 2</p><p>Line 3</p><p>Line 4</p><p>Line 5</p></div>
+  <div class="ticker">Slow transition element</div>
+  <div class="hero">Hero section using 100vh</div>
 </body>
 </html>
 '@ | Set-Content "$t19Dir\index.html"
@@ -971,6 +999,7 @@ if ((Test-Path $e2eScript19) -and (Test-Path $nm19)) {
     $r19  = (node $e2eScript19 $t19Url $ss19 1280 800 2>$null) -join ''
     try { $j19 = $r19 | ConvertFrom-Json } catch { $j19 = $null }
 
+    # Existing always-on fields
     Assert "real URL s19: headings field present"                ($j19 -and $j19.PSObject.Properties['headings'])
     Assert "real URL s19: headings.h1Count >= 1"                 ($j19 -and $j19.headings.h1Count -ge 1)
     Assert "real URL s19: headings.skips is an array"            ($j19 -and $j19.headings.PSObject.Properties['skips'])
@@ -985,10 +1014,64 @@ if ((Test-Path $e2eScript19) -and (Test-Path $nm19)) {
     Assert "real URL s19: layout field present"                  ($j19 -and $j19.PSObject.Properties['layout'])
     Assert "real URL s19: layout.hasHorizontalScroll is bool"    ($j19 -and $j19.layout.PSObject.Properties['hasHorizontalScroll'])
     Assert "real URL s19: layout.wideElements is an array"       ($j19 -and $j19.layout.PSObject.Properties['wideElements'])
+    Assert "real URL s19: layout.hiddenOverflowElements present" ($j19 -and $j19.layout.PSObject.Properties['hiddenOverflowElements'])
+    Assert "real URL s19: layout detects overflow-hidden clip"   ($j19 -and $j19.layout.hiddenOverflowElements.Count -ge 1)
 
     Assert "real URL s19: meta.lang is 'en'"                     ($j19 -and $j19.meta.lang -eq 'en')
     Assert "real URL s19: meta.charset present"                  ($j19 -and $j19.meta.PSObject.Properties['charset'])
     Assert "real URL s19: images.missingSrcset >= 0"             ($j19 -and $j19.images.PSObject.Properties['missingSrcset'])
+
+    # typography
+    Assert "real URL s19: typography field present"              ($j19 -and $j19.PSObject.Properties['typography'])
+    Assert "real URL s19: typography.smallText is an array"      ($j19 -and $j19.typography.PSObject.Properties['smallText'])
+    Assert "real URL s19: typography.tightLineHeight is array"   ($j19 -and $j19.typography.PSObject.Properties['tightLineHeight'])
+    Assert "real URL s19: typography.truncated is an array"      ($j19 -and $j19.typography.PSObject.Properties['truncated'])
+    Assert "real URL s19: typography.warnings is an array"       ($j19 -and $j19.typography.PSObject.Properties['warnings'])
+    Assert "real URL s19: typography detects ellipsis truncation" ($j19 -and $j19.typography.truncated.Count -ge 1)
+
+    # interactiveStates
+    Assert "real URL s19: interactiveStates field present"       ($j19 -and $j19.PSObject.Properties['interactiveStates'])
+    Assert "real URL s19: interactiveStates.hoverRuleCount >= 0" ($j19 -and $j19.interactiveStates.PSObject.Properties['hoverRuleCount'])
+    Assert "real URL s19: interactiveStates.focusRuleCount >= 0" ($j19 -and $j19.interactiveStates.PSObject.Properties['focusRuleCount'])
+    Assert "real URL s19: interactiveStates.warnings is array"   ($j19 -and $j19.interactiveStates.PSObject.Properties['warnings'])
+
+    # cursor
+    Assert "real URL s19: cursor field present"                  ($j19 -and $j19.PSObject.Properties['cursor'])
+    Assert "real URL s19: cursor.checked >= 0"                   ($j19 -and $j19.cursor.PSObject.Properties['checked'])
+    Assert "real URL s19: cursor.missingPointer >= 0"            ($j19 -and $j19.cursor.PSObject.Properties['missingPointer'])
+    Assert "real URL s19: cursor.warnings is an array"           ($j19 -and $j19.cursor.PSObject.Properties['warnings'])
+    Assert "real URL s19: cursor detects button with default"    ($j19 -and $j19.cursor.missingPointer -ge 1)
+
+    # viewportUnits
+    Assert "real URL s19: viewportUnits field present"           ($j19 -and $j19.PSObject.Properties['viewportUnits'])
+    Assert "real URL s19: viewportUnits.unsafeVhCount >= 0"      ($j19 -and $j19.viewportUnits.PSObject.Properties['unsafeVhCount'])
+    Assert "real URL s19: viewportUnits.details is array"        ($j19 -and $j19.viewportUnits.PSObject.Properties['details'])
+    Assert "real URL s19: viewportUnits.warnings is array"       ($j19 -and $j19.viewportUnits.PSObject.Properties['warnings'])
+    Assert "real URL s19: viewportUnits detects 100vh rule"      ($j19 -and $j19.viewportUnits.unsafeVhCount -ge 1)
+
+    # mediaQuerySupport
+    Assert "real URL s19: mediaQuerySupport field present"       ($j19 -and $j19.PSObject.Properties['mediaQuerySupport'])
+    Assert "real URL s19: mediaQuerySupport.hasDarkModeCSS bool" ($j19 -and $j19.mediaQuerySupport.PSObject.Properties['hasDarkModeCSS'])
+    Assert "real URL s19: mediaQuerySupport.hasReducedMotion"    ($j19 -and $j19.mediaQuerySupport.PSObject.Properties['hasReducedMotionCSS'])
+    Assert "real URL s19: mediaQuerySupport.warnings is array"   ($j19 -and $j19.mediaQuerySupport.PSObject.Properties['warnings'])
+
+    # formUX
+    Assert "real URL s19: formUX field present"                  ($j19 -and $j19.PSObject.Properties['formUX'])
+    Assert "real URL s19: formUX.missingAutocomplete is array"   ($j19 -and $j19.formUX.PSObject.Properties['missingAutocomplete'])
+    Assert "real URL s19: formUX.warnings is an array"           ($j19 -and $j19.formUX.PSObject.Properties['warnings'])
+    Assert "real URL s19: formUX detects email missing autocomplete" ($j19 -and $j19.formUX.missingAutocomplete.Count -ge 1)
+
+    # animationDurations
+    Assert "real URL s19: animationDurations field present"      ($j19 -and $j19.PSObject.Properties['animationDurations'])
+    Assert "real URL s19: animationDurations.longAnimations arr" ($j19 -and $j19.animationDurations.PSObject.Properties['longAnimations'])
+    Assert "real URL s19: animationDurations.longTransitions arr"($j19 -and $j19.animationDurations.PSObject.Properties['longTransitions'])
+    Assert "real URL s19: animationDurations.warnings is array"  ($j19 -and $j19.animationDurations.PSObject.Properties['warnings'])
+    Assert "real URL s19: animationDurations detects 500ms trans"($j19 -and $j19.animationDurations.longTransitions.Count -ge 1)
+
+    # stacking
+    Assert "real URL s19: stacking field present"                ($j19 -and $j19.PSObject.Properties['stacking'])
+    Assert "real URL s19: stacking.veryHighZIndex is array"      ($j19 -and $j19.stacking.PSObject.Properties['veryHighZIndex'])
+    Assert "real URL s19: stacking.warnings is an array"         ($j19 -and $j19.stacking.PSObject.Properties['warnings'])
 
     # --link-check
     $ss19Lc = "$env:TEMP\s19-lc.png"
@@ -998,6 +1081,42 @@ if ((Test-Path $e2eScript19) -and (Test-Path $nm19)) {
     Assert "--link-check: linkCheck.checked >= 0"      ($j19Lc -and $j19Lc.linkCheck.PSObject.Properties['checked'])
     Assert "--link-check: linkCheck.broken >= 0"       ($j19Lc -and $j19Lc.linkCheck.PSObject.Properties['broken'])
     Assert "--link-check: linkCheck.warnings is array" ($j19Lc -and $j19Lc.linkCheck.PSObject.Properties['warnings'])
+
+    # --reflow
+    $ss19Rf = "$env:TEMP\s19-rf.png"
+    $r19Rf  = (node $e2eScript19 $t19Url $ss19Rf 1280 800 --reflow 2>$null) -join ''
+    try { $j19Rf = $r19Rf | ConvertFrom-Json } catch { $j19Rf = $null }
+    Assert "--reflow: reflow field present"                     ($j19Rf -and $j19Rf.PSObject.Properties['reflow'])
+    Assert "--reflow: reflow.hasHorizontalScrollAt320px bool"   ($j19Rf -and $j19Rf.reflow.PSObject.Properties['hasHorizontalScrollAt320px'])
+    Assert "--reflow: reflow.wideElements is array"             ($j19Rf -and $j19Rf.reflow.PSObject.Properties['wideElements'])
+    Assert "--reflow: reflow.warnings is array"                 ($j19Rf -and $j19Rf.reflow.PSObject.Properties['warnings'])
+    Assert "--reflow: -reflow-320px.png file created"           (Test-Path "$env:TEMP\s19-rf-reflow-320px.png")
+
+    # --text-spacing
+    $ss19Ts = "$env:TEMP\s19-ts.png"
+    $r19Ts  = (node $e2eScript19 $t19Url $ss19Ts 1280 800 --text-spacing 2>$null) -join ''
+    try { $j19Ts = $r19Ts | ConvertFrom-Json } catch { $j19Ts = $null }
+    Assert "--text-spacing: textSpacing field present"          ($j19Ts -and $j19Ts.PSObject.Properties['textSpacing'])
+    Assert "--text-spacing: textSpacing.clippedElements array"  ($j19Ts -and $j19Ts.textSpacing.PSObject.Properties['clippedElements'])
+    Assert "--text-spacing: textSpacing.warnings is array"      ($j19Ts -and $j19Ts.textSpacing.PSObject.Properties['warnings'])
+    Assert "--text-spacing: -text-spacing.png file created"     (Test-Path "$env:TEMP\s19-ts-text-spacing.png")
+
+    # --paint-complexity
+    $ss19Pc = "$env:TEMP\s19-pc.png"
+    $r19Pc  = (node $e2eScript19 $t19Url $ss19Pc 1280 800 --paint-complexity 2>$null) -join ''
+    try { $j19Pc = $r19Pc | ConvertFrom-Json } catch { $j19Pc = $null }
+    Assert "--paint-complexity: paintComplexity field present"           ($j19Pc -and $j19Pc.PSObject.Properties['paintComplexity'])
+    Assert "--paint-complexity: expensiveProperties is array"            ($j19Pc -and $j19Pc.paintComplexity.PSObject.Properties['expensiveProperties'])
+    Assert "--paint-complexity: paintComplexity.warnings is array"       ($j19Pc -and $j19Pc.paintComplexity.PSObject.Properties['warnings'])
+
+    # --state-contrast
+    $ss19Sc = "$env:TEMP\s19-sc.png"
+    $r19Sc  = (node $e2eScript19 $t19Url $ss19Sc 1280 800 --state-contrast 2>$null) -join ''
+    try { $j19Sc = $r19Sc | ConvertFrom-Json } catch { $j19Sc = $null }
+    Assert "--state-contrast: stateContrast field present"               ($j19Sc -and $j19Sc.PSObject.Properties['stateContrast'])
+    Assert "--state-contrast: stateContrast.checked >= 0"                ($j19Sc -and $j19Sc.stateContrast.PSObject.Properties['checked'])
+    Assert "--state-contrast: stateContrast.lowContrast >= 0"            ($j19Sc -and $j19Sc.stateContrast.PSObject.Properties['lowContrast'])
+    Assert "--state-contrast: stateContrast.warnings is array"           ($j19Sc -and $j19Sc.stateContrast.PSObject.Properties['warnings'])
 
     if ($t19Proc) {
         try { Stop-Process -Id $t19Proc.Id -Force -ErrorAction SilentlyContinue } catch {}
