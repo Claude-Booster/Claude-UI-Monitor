@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# commit-msg: blocks commit messages containing patterns defined in .githooks/blocked-patterns
+
+PATTERNS=".githooks/blocked-patterns"
+MSG_FILE="$1"
+
+[ ! -f "$PATTERNS" ] && exit 0
+[ ! -f "$MSG_FILE"  ] && exit 0
+
+if grep -qIEf "$PATTERNS" "$MSG_FILE" 2>/dev/null; then
+  printf '\nCommit blocked: commit message matches a restricted pattern in %s\n' "$PATTERNS" >&2
+  printf 'Edit the message to remove the restricted content.\n' >&2
+  exit 1
+fi
+
+exit 0
