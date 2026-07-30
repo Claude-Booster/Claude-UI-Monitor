@@ -16,7 +16,7 @@ Start-Sleep 3
 ```
 
 **Step 2 — Lighthouse BEFORE** (chrome-devtools-mcp `lighthouse_audit`)
-Record baseline `performance / accessibility / best_practices / seo` scores before any fix.
+Record baseline `performance / accessibility` scores before any fix.
 
 **Step 3 — Screenshots via PowerShell** (always works — no MCP session dependency)
 ```
@@ -43,11 +43,45 @@ auto-enables multi-frame capture, hover states, and scroll capture when relevant
 - All viewports: broken fonts, low contrast, broken images, empty states
 
 Also check these JSON fields from the desktop pw-e2e-test.js output (included automatically):
-- `meta.issues[]` — missing title/description/og:image/canonical; flag any entries
+- `meta.issues[]` — viewport blocks zoom (WCAG 1.4.4), missing `<html lang>` (WCAG 3.1.1)
+- `meta.lang` / `meta.charset` / `meta.dir` — HTML language, character set, text direction
 - `images.broken` / `images.missingAlt` / `images.oversized` — flag if > 0
-- `bundle.warnings[]` — flag JS > 512KB or total transfer > 2MB
+- `images.lazyAboveFold` — above-fold images marked `loading=lazy` (hurts LCP); flag if > 0
+- `images.missingFetchPriority` — large above-fold images without `fetchpriority="high"`; flag if > 0
+- `images.missingSrcset` — images > 200px wide without `srcset` (no responsive images); flag if > 0
+- `images.missingHeight` — `<img>` elements > 100px wide without a `height` attribute (causes layout shift); flag if > 0
+- `scripts.renderBlocking` — third-party scripts that delay page display; flag if > 0
+- `touchTargets.warnings[]` — interactive elements below 24×24px (WCAG 2.5.8); flag if > 0
+- `headings.h1Count` / `headings.skips[]` — missing/multiple h1, heading level skips (h2→h4 etc.)
+- `domA11y.brokenAriaRefs[]` — `aria-labelledby/describedby/controls` pointing at non-existent IDs
+- `domA11y.unlabeledInputs` — form inputs with no accessible label (WCAG 1.3.1); flag if > 0
+- `domA11y.iconOnlyButtons` — buttons containing only icons with no `aria-label`/text/title; flag if > 0
+- `domA11y.titleOnlyInteractive` — interactive elements using `title` as sole label (invisible on touch); flag if > 0
+- `layout.hasHorizontalScroll` / `layout.wideElements[]` — viewport overflow (mobile breakage)
+- `layout.hiddenOverflowElements[]` — elements where `overflow:hidden` is clipping content; flag if > 0
+- `layout.stickyFixed[]` — sticky/fixed elements at `top:0`/`bottom:0` ≥ 40px tall; may hide scrolled-to content; flag if height > 80px
 - `fonts.failed[]` / `fonts.foitRisk[]` — failed fonts or FOIT (invisible text flash) risk
-- `securityHeaders.missing[]` — flag missing CSP, HSTS, or X-Frame-Options on production URLs
+- `typography.smallText[]` — elements with font-size < 16px on mobile (triggers iOS auto-zoom); flag if > 0
+- `typography.tightLineHeight[]` — elements with line-height < 1.2 (WCAG 1.4.12); flag if > 0
+- `typography.truncated[]` — elements silently clipping text with `text-overflow:ellipsis`; flag if > 0
+- `interactiveStates.warnings[]` — missing `:hover`/`:focus`/`:disabled` CSS rules; flag if not empty
+- `interactiveStates.removedFocusOutline[]` — `:focus { outline:0/none }` without `:focus-visible` replacement (WCAG 2.4.7); flag if > 0
+- `cursor.missingPointer` — interactive elements without `cursor:pointer`; flag if > 0
+- `cursor.pointerEventsNone` — visible interactive elements with `pointer-events:none` (look clickable, aren't); flag if > 0
+- `viewportUnits.unsafeVhCount` — CSS rules using `height:100vh` (clipped on mobile); flag if > 0
+- `mediaQuerySupport.hasDarkModeCSS` / `.hasReducedMotionCSS` — CSS media query presence; flag if false
+- `mediaQuerySupport.hasResponsiveBreakpoints` / `.breakpointCount` — any `@media (max/min-width)` present; flag if false
+- `formUX.missingAutocomplete[]` — email/password/tel inputs missing `autocomplete`; flag if > 0
+- `animationDurations.longTransitions[]` — transitions > 300ms (sluggish hover/focus); flag if > 0
+- `animationDurations.longAnimations[]` — animations > 1s (feels slow); flag if > 0
+- `animationDurations.infiniteAnimations[]` — infinite animations without pause mechanism (WCAG 2.2.2); flag if > 0
+- `stacking.veryHighZIndex[]` — elements with z-index > 9999 (stacking anomalies); flag if > 0
+- `svgA11y.missingRole` / `.missingTitle` — informative SVGs missing `role="img"` or `<title>`; flag if > 0
+- `mediaA11y.autoplayWithoutMuted[]` — `<video autoplay>` without `muted` (WCAG 1.4.2); flag if > 0
+- `mediaA11y.missingCaptions[]` — `<video>` without a `<track kind="captions">` (WCAG 1.2.2); flag if > 0
+- `colorOnly.colorOnlyLinks[]` — inline links distinguished from body text only by color (WCAG 1.4.1); flag if > 0
+- `textSelectability.count` — text blocks with `user-select:none` that users can't copy; flag if > 0
+- `bundle.jsKB` / `bundle.cssKB` / `bundle.totalTransferKB` — resource sizes for jank diagnosis
 
 **Step 7a — Advanced UI check** (only when desktop JSON output contains an `advanced` field)
 - **FPS** (`advanced.fps`): < 55 = flag jank | 30–54 = reduced | < 30 = janky; investigate CSS animation performance
@@ -60,7 +94,7 @@ Also check these JSON fields from the desktop pw-e2e-test.js output (included au
 **Step 8 — Fix** any issues by editing source files
 
 **Step 9 — Lighthouse AFTER** (chrome-devtools-mcp `lighthouse_audit`)
-Compare to BEFORE scores. If any score dropped by >2 points → revert the fix and retry.
+Compare `performance / accessibility` scores to BEFORE. If either dropped by >2 points → revert the fix and retry.
 
 **Step 10 — Re-screenshot** desktop to confirm fix visually
 
@@ -68,8 +102,8 @@ Compare to BEFORE scores. If any score dropped by >2 points → revert the fix a
 ```json
 {"ts":"<ISO>","project":"<name>","port":<n>,"url":"<url>","trigger":"edit","file_edited":"<path>",
  "screenshots":{"desktop":"...","mobile":"...","tablet":"..."},
- "lighthouse_before":{"performance":<n>,"accessibility":<n>,"best_practices":<n>,"seo":<n>},
- "lighthouse_after":{"performance":<n>,"accessibility":<n>,"best_practices":<n>,"seo":<n>},
+ "lighthouse_before":{"performance":<n>,"accessibility":<n>},
+ "lighthouse_after":{"performance":<n>,"accessibility":<n>},
  "issues":["..."],"fixes":["..."],"duration_s":<n>}
 ```
 
@@ -94,7 +128,7 @@ Per-project metadata (path, start command): `~/.claude/project-registry.json`
 
 - **playwright** MCP: `browser_navigate`, `browser_take_screenshot`, `browser_snapshot`, `browser_click`, `browser_type`
 - **chrome-devtools-mcp** MCP: `list_console_messages`, `list_network_requests`, `lighthouse_audit`, `take_screenshot`
-- **figma** MCP: `get_screenshot` (frame → PNG), `get_metadata` (layer tree), `get_design_context` (React/Tailwind spec)
+- **figma** MCP: `get_screenshot` (frame → PNG), `get_metadata` (layer tree), `get_variable_defs` (design tokens, Desktop only), `get_design_context` (React/Tailwind spec)
 
 These tools load at new-chat start. When they are available, use them. When they are not
 (mid-session, headless run), fall back to the PowerShell node scripts — those always work.
@@ -120,12 +154,10 @@ Report any CSS custom property mismatches as additional issues.
 ## Additional UI Tools (CLI — call via PowerShell tool)
 
 - **Stylelint** (global): `stylelint --fix --config ~/.claude/.stylelintrc.json <file>` — auto-fixes CSS/SCSS. Runs automatically in hook on every CSS/SCSS edit.
-- **pw-e2e-test.js**: `node ~/.claude/scripts/pw-e2e-test.js <url> <out.png> [width] [height]` — screenshot + axe-core audit + meta/OG, images, bundle, fonts, security headers (always-on). Outputs JSON.
+- **pw-e2e-test.js**: `node ~/.claude/scripts/pw-e2e-test.js <url> <out.png> [width] [height]` — screenshot + axe-core + full UI/UX audit (always-on). Outputs JSON.
 - **pw-e2e-test.js (multi-page)**: `node ~/.claude/scripts/pw-e2e-test.js <url> <prefix> 1280 800 --routes=auto --nav=link-crawl` — screenshots every route/tab; outputs JSON array.
 - **pw-e2e-test.js (extended flags)**:
   - `--dark-mode` — extra screenshot + axe-core run with `prefers-color-scheme: dark` emulated → `darkMode.out` + `darkModeA11y`
-  - `--css-coverage` — CSS unused-% report per stylesheet (Playwright built-in) → `css`
-  - `--har` — save full network HAR file (`<outBase>.har`) → `harPath`
   - `--cwv` — Core Web Vitals: LCP, CLS+sources, FCP, TTFB, TBT via PerformanceObserver (~5-8s extra) → `cwv`
   - `--compare=<baseline.png>` — pixel-diff current screenshot vs baseline (creates baseline on first run; needs `pixelmatch`/`pngjs` — installed) → `diff`
   - `--reduced-motion` — extra screenshot with `prefers-reduced-motion: reduce` (WCAG 2.3.3) → `reducedMotion.out`
@@ -133,6 +165,14 @@ Report any CSS custom property mismatches as additional issues.
   - `--print` — extra screenshot with `media: print` emulated (print stylesheet check) → `print.out`
   - `--no-js` — extra screenshot with JavaScript disabled; flags blank SPAs without SSR → `noJs`
   - `--focus-audit` — tab through up to 20 focusable elements; flag missing focus rings (WCAG 2.4.7) → `focusAudit`
+  - `--link-check` — HEAD-check internal links (cap 20); flag broken ones → `linkCheck`
+  - `--reflow` — 320px viewport screenshot + layout check (WCAG 1.4.10 Reflow) → `reflow`
+  - `--text-spacing` — inject WCAG 1.4.12 overrides; screenshot + detect clipped content → `textSpacing`
+  - `--paint-complexity` — detect expensive paint properties (filter/backdrop-filter/multi-shadow) on large elements → `paintComplexity`
+  - `--state-contrast` — WCAG 1.4.3 contrast check in default + hover state for interactive elements → `stateContrast`
+  - `--required-fields` — required form fields missing `aria-required="true"` → `requiredFields`
+  - `--animation-fill` — animations missing `fill-mode:forwards/both` (element snaps back after animation) → `animationDurations.missingFillMode`
+  - `--empty-states` — stuck loading spinners + empty list/grid containers with no empty-state UI → `emptyStates`
 - **Figma baseline export**: `node ~/.claude/scripts/figma-baseline.js --file=<key> --nodes=<id1,id2>` — fetch Figma frames as PNG baselines (requires `FIGMA_ACCESS_TOKEN` in `~/.claude/.env`). Use `--list` to see all frames.
 - **Design token check**: `node ~/.claude/scripts/figma-token-check.js <url> --tokens=~/.claude/design-tokens.json` — compare CSS custom properties in live app against a design token JSON file.
 - **Snapshot baselines**: `cd ~/.claude/scripts && npm run snapshots:update` / `npm run snapshots`
@@ -149,13 +189,13 @@ Report any CSS custom property mismatches as additional issues.
 4. **Find frame node IDs**: `node ~/.claude/scripts/figma-baseline.js --file=<key> --list` prints all frames with their IDs.
 5. **Design tokens** (Starter compatible): Install the free **Tokens Studio** Figma plugin → export tokens → save as `~/.claude/design-tokens.json` (flat `{ "--css-var": "value" }` or W3C DTCG format). Then `figma-token-check.js` reads it. The Variables REST API (Enterprise only) is NOT used.
 
-> Note: `get_variable_defs` MCP tool requires Figma Desktop app — skip it on Starter/remote setups.
+> Note: `get_variable_defs` MCP tool requires Figma Desktop App — skip it on Starter/remote setups.
 
 ## Adding a New Project
 
 1. Add an entry to `~/.claude/project-registry.json` (name, path, framework, port, start command).
 2. If the framework is new, add it to `~/.claude/framework-registry.json`.
-3. Add the project to the table above.
+3. Add the project to the Known UI Projects table above.
 4. Optionally add a `CLAUDE.md` in the project directory with project-specific UI notes.
 
 ## Auto-fix control
