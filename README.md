@@ -91,6 +91,28 @@ flowchart LR
 </tr>
 </table>
 
+### Always included in every `pw-e2e-test.js` JSON output
+
+Every screenshot run (hook or manual) now includes these zero-overhead audits:
+
+| Field | What it reports |
+|---|---|
+| `meta` | OpenGraph tags, SEO meta description, canonical link, viewport — with an `issues[]` list |
+| `images` | Broken images, missing alt text, oversized (natural >> display), non-lazy, legacy formats |
+| `bundle` | JS / CSS / image KB from the Performance API, largest 3 resources, slowest 3 resources |
+| `fonts` | Loaded/failed fonts, FOIT risk (`font-display: auto/block`), FOUT risk (`swap`) |
+| `securityHeaders` | CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy — lists missing headers |
+
+**Optional flag-gated checks:**
+
+| Flag | What it adds | Overhead |
+|---|---|---|
+| `--dark-mode` | Extra screenshot with `prefers-color-scheme: dark` | ~200ms |
+| `--css-coverage` | Unused CSS % per stylesheet (Playwright built-in) | ~0ms |
+| `--har` | Full network HAR file (`<outBase>.har`) for waterfall analysis | ~0ms |
+| `--cwv` | Core Web Vitals: LCP / CLS / FCP / TTFB with good/needs-improvement/poor ratings | ~5-8s |
+| `--compare=<path>` | Pixel-diff vs baseline PNG; diff PNG written to disk; auto-creates baseline on first run | ~50ms |
+
 ---
 
 ## Prerequisites
@@ -183,6 +205,7 @@ pwsh -File ~/.claude/scripts/sweep-all.ps1 -Fix
 pwsh -File ~/.claude/scripts/schedule-sweep.ps1
 
 # Screenshot a URL manually (outputs JSON + PNG)
+# Always includes: meta/OG audit, image quality, bundle sizes, fonts, security headers
 node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800
 
 # Multi-page: screenshot every route/tab
@@ -197,6 +220,13 @@ node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out 1280 800 --anima
 node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out 1280 800 --hover       # screenshot interactive element hover states
 node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out 1280 800 --scroll      # screenshot at 25/50/75/100% scroll depth
 node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out 1280 800 --video       # record a .webm of animated content
+
+# Extended checks (combinable with any of the above)
+node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --dark-mode       # dark mode screenshot
+node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --css-coverage    # unused CSS % per stylesheet
+node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --har             # save network HAR file
+node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --cwv             # Core Web Vitals (LCP/CLS/FCP/TTFB)
+node ~/.claude/scripts/pw-e2e-test.js http://localhost:3000 out.png 1280 800 --compare=base.png  # pixel-diff vs baseline
 ```
 
 ---

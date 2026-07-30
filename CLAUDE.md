@@ -42,6 +42,13 @@ auto-enables multi-frame capture, hover states, and scroll capture when relevant
 - Tablet (768×1024): mid-size layout adaptation, panels stacking wrong
 - All viewports: broken fonts, low contrast, broken images, empty states
 
+Also check these JSON fields from the desktop pw-e2e-test.js output (included automatically):
+- `meta.issues[]` — missing title/description/og:image/canonical; flag any entries
+- `images.broken` / `images.missingAlt` / `images.oversized` — flag if > 0
+- `bundle.warnings[]` — flag JS > 512KB or total transfer > 2MB
+- `fonts.failed[]` / `fonts.foitRisk[]` — failed fonts or FOIT (invisible text flash) risk
+- `securityHeaders.missing[]` — flag missing CSP, HSTS, or X-Frame-Options on production URLs
+
 **Step 7a — Advanced UI check** (only when desktop JSON output contains an `advanced` field)
 - **FPS** (`advanced.fps`): < 55 = flag jank | 30–54 = reduced | < 30 = janky; investigate CSS animation performance
 - **Animation frames** (`advanced.frames[]`): Read each PNG — verify animation progresses correctly, no frozen/stuck states
@@ -113,8 +120,14 @@ Report any CSS custom property mismatches as additional issues.
 ## Additional UI Tools (CLI — call via PowerShell tool)
 
 - **Stylelint** (global): `stylelint --fix --config ~/.claude/.stylelintrc.json <file>` — auto-fixes CSS/SCSS. Runs automatically in hook on every CSS/SCSS edit.
-- **pw-e2e-test.js**: `node ~/.claude/scripts/pw-e2e-test.js <url> <out.png> [width] [height]` — screenshot + axe-core audit, always available regardless of MCP state.
+- **pw-e2e-test.js**: `node ~/.claude/scripts/pw-e2e-test.js <url> <out.png> [width] [height]` — screenshot + axe-core audit + meta/OG, images, bundle, fonts, security headers (always-on). Outputs JSON.
 - **pw-e2e-test.js (multi-page)**: `node ~/.claude/scripts/pw-e2e-test.js <url> <prefix> 1280 800 --routes=auto --nav=link-crawl` — screenshots every route/tab; outputs JSON array.
+- **pw-e2e-test.js (extended flags)**:
+  - `--dark-mode` — extra screenshot with `prefers-color-scheme: dark` emulated
+  - `--css-coverage` — CSS unused-% report per stylesheet (Playwright built-in)
+  - `--har` — save full network HAR file (`<outBase>.har`)
+  - `--cwv` — Core Web Vitals (LCP, CLS, FCP, TTFB) via PerformanceObserver (~5-8s extra)
+  - `--compare=<baseline.png>` — pixel-diff current screenshot vs baseline (creates baseline on first run; needs `pixelmatch`/`pngjs` — installed)
 - **Figma baseline export**: `node ~/.claude/scripts/figma-baseline.js --file=<key> --nodes=<id1,id2>` — fetch Figma frames as PNG baselines (requires `FIGMA_ACCESS_TOKEN` in `~/.claude/.env`). Use `--list` to see all frames.
 - **Design token check**: `node ~/.claude/scripts/figma-token-check.js <url> --tokens=~/.claude/design-tokens.json` — compare CSS custom properties in live app against a design token JSON file.
 - **Snapshot baselines**: `cd ~/.claude/scripts && npm run snapshots:update` / `npm run snapshots`
