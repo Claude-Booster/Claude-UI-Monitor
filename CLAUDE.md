@@ -52,6 +52,7 @@ Also check these JSON fields from the desktop pw-e2e-test.js output (included au
 - `images.missingHeight` — `<img>` elements > 100px wide without a `height` attribute (causes layout shift); flag if > 0
 - `scripts.renderBlocking` — third-party scripts that delay page display; flag if > 0
 - `touchTargets.warnings[]` — interactive elements below 24×24px (WCAG 2.5.8); flag if > 0
+- `touchTargets.failingAAA` — interactive elements 24–43px: pass AA (2.5.8) but fail AAA (2.5.5 44px); flag if > 0
 - `headings.h1Count` / `headings.skips[]` — missing/multiple h1, heading level skips (h2→h4 etc.)
 - `domA11y.brokenAriaRefs[]` — `aria-labelledby/describedby/controls` pointing at non-existent IDs
 - `domA11y.unlabeledInputs` — form inputs with no accessible label (WCAG 1.3.1); flag if > 0
@@ -79,6 +80,8 @@ Also check these JSON fields from the desktop pw-e2e-test.js output (included au
 - `svgA11y.missingRole` / `.missingTitle` — informative SVGs missing `role="img"` or `<title>`; flag if > 0
 - `mediaA11y.autoplayWithoutMuted[]` — `<video autoplay>` without `muted` (WCAG 1.4.2); flag if > 0
 - `mediaA11y.missingCaptions[]` — `<video>` without a `<track kind="captions">` (WCAG 1.2.2); flag if > 0
+- `mediaA11y.audioAutoplayNoControls` — `<audio autoplay>` without `controls` — user cannot pause (WCAG 1.4.2); flag if > 0
+- `mediaA11y.audioMissingControls` — `<audio>` without `controls` attribute; flag if > 0
 - `colorOnly.colorOnlyLinks[]` — inline links distinguished from body text only by color (WCAG 1.4.1); flag if > 0
 - `textSelectability.count` — text blocks with `user-select:none` that users can't copy; flag if > 0
 - `bundle.jsKB` / `bundle.cssKB` / `bundle.totalTransferKB` — resource sizes for jank diagnosis
@@ -110,23 +113,30 @@ Also check these JSON fields from the desktop pw-e2e-test.js output (included au
 - `typography.longLines` — text blocks estimated > 80 chars/line (WCAG 1.4.8 readability); flag if > 0
 - `typography.allCapsBlocks` — text-transform:uppercase on blocks > 30 chars (readability); flag if > 0
 - `layout.missingSafeArea` — fixed-bottom elements without env(safe-area-inset-bottom) (iPhone notch); flag if > 0
+- `layout.focusObscureRisk` — sticky/fixed elements > 80px tall that may fully obscure focused elements (WCAG 2.4.11); flag if > 0
 - `layout.consecutiveBr` — consecutive <br><br> used for spacing instead of CSS margins; flag if > 0
 - `fonts.missingFontPreload` — @font-face custom fonts without matching <link rel="preload"> hint; flag if > 0
 - `cwv.inp` / `cwv.ratings.inp` — Interaction to Next Paint (new CWV replacing FID); flag if > 200ms
 - `scripts.firstPartyRenderBlocking` — first-party render-blocking scripts (defer/async missing); flag if > 0
 - `scripts.stylesheetInBody` — `<link rel="stylesheet">` inside `<body>` causing FOUC and blocking LCP; flag if > 0
 - `images.iframesWithoutLazy` — third-party/below-fold iframes without `loading="lazy"` (blocks main thread); flag if > 0
+- `images.legacyFormatImages` — images > 30 KB served as JPEG/PNG when WebP/AVIF would save 25-50%; flag if > 0
 - `meta.missingTitle` — empty or missing `<title>` element (WCAG 2.4.2); flag if true
 - `meta.orientationLock` — CSS hides content in one orientation (WCAG 1.3.4); flag if true
 - `mediaQuerySupport.hasPrefersContrastCSS` — CSS media query `prefers-contrast` present; flag if false
+- `mediaQuerySupport.unguardedSmoothScroll` — `scroll-behavior:smooth` outside `prefers-reduced-motion:no-preference` guard (WCAG 2.3.3); flag if true
 - `domA11y.positiveTabindex` — elements with `tabindex > 0` disrupting focus order (WCAG 2.4.3); flag if > 0
 - `domA11y.ariaInvalidMissingMessage` — `aria-invalid="true"` without linked error message (WCAG 3.3.1); flag if > 0
 - `domA11y.missingAriaCurrent` — active nav link missing `aria-current="page"` (WCAG 2.4.8); flag if true
 - `domA11y.rolePresentationFocusable` — `role="none/presentation"` on natively focusable elements (WCAG 4.1.2); flag if > 0
 - `domA11y.menuRoleMisuse` — `role="menu"` used for navigation instead of actions (WCAG 4.1.2); flag if > 0
+- `domA11y.detailsMissingSummary` — `<details>` without `<summary>` or with empty summary (WCAG 4.1.2); flag if > 0
+- `domA11y.meterProgressMissingLabel` — `<meter>`/`<progress>` without accessible name (WCAG 4.1.2); flag if > 0
 - `widgets.comboboxIssues` — `[role="combobox"]` missing aria-expanded or aria-controls→listbox (WCAG 4.1.2); flag if > 0
 - `formUX.passwordAutocompleteOff` — password inputs with `autocomplete="off"` blocking password managers (WCAG 3.3.8); flag if > 0
 - `formUX.missingInputMode` — numeric/tel-like text inputs missing `inputmode` (wrong soft keyboard on mobile); flag if > 0
+- `formUX.numberInputMisuse` — `input[type=number]` on ZIP/CVV/PIN/phone (strips leading zeros, accepts e/+/-); flag if > 0
+- `formUX.missingPersonalAutocomplete` — personal data fields (name/address/CC) missing specific WCAG 1.3.5 autocomplete token; flag if > 0
 - `layout.willChangeCount` / `layout.willChangeAll` — `will-change` on > 4 elements wastes VRAM; `will-change:all` is always wrong
 - `layout.contentVisibilityMissingIntrinsic` — `content-visibility:auto` without `contain-intrinsic-size` causes CLS; flag if > 0
 

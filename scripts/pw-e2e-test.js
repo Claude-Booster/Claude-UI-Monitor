@@ -356,8 +356,8 @@ async function runMetaAudit(page) {
   });
 }
 
-async function runImageAudit(page) {
-  return page.evaluate(() => {
+async function runImageAudit(page, imageFormats = {}) {
+  return page.evaluate((fmts) => {
     const vh = window.innerHeight;
     const imgs = [...document.querySelectorAll('img')].map(img => {
       const rect        = img.getBoundingClientRect();
@@ -387,6 +387,13 @@ async function runImageAudit(page) {
     const lazyAboveFold  = imgs.filter(i => i.foldIssue === 'LAZY_ABOVE_FOLD');
     const heroCandidates = imgs.filter(i => i.isHeroCandidate);
     const missingSrcset  = imgs.filter(i => i.missingSrcset);
+    // Legacy format images: JPEG/PNG > 30 KB when WebP/AVIF would save 25-50%
+    const resources = performance.getEntriesByType('resource');
+    const legacyFormatImages = resources
+      .filter(r => r.initiatorType === 'img' && r.transferSize > 30720)
+      .filter(r => { const f = fmts[r.name]; return f === 'image/jpeg' || f === 'image/png'; })
+      .slice(0, 10)
+      .map(r => ({ url: r.name.slice(0, 100), format: (fmts[r.name] || 'unknown').replace('image/', ''), kb: Math.round(r.transferSize / 1024) }));
     // Below-fold third-party iframes without loading="lazy" (CWV: TBT, TTI)
     const HEAVY_DOMAINS = /youtube\.com|youtu\.be|vimeo\.com|maps\.google|maps\.googleapis|player\.vimeo|open\.spotify|twitter\.com\/widgets|platform\.twitter|facebook\.com\/plugins/;
     const iframesWithoutLazy = [...document.querySelectorAll('iframe[src]')]
@@ -407,6 +414,7 @@ async function runImageAudit(page) {
       missingSrcset:        missingSrcset.length,
       missingHeight:        imgs.filter(i => i.missingHeight).length,
       iframesWithoutLazy:   iframesWithoutLazy.length,
+      legacyFormatImages:   legacyFormatImages.length,
       details: {
         broken:           imgs.filter(i => i.broken).map(i => i.src),
         missingAlt:       imgs.filter(i => i.missingAlt).map(i => i.src || '(no src)'),
@@ -415,15 +423,17 @@ async function runImageAudit(page) {
         heroMissingFP:    heroCandidates.map(i => i.src),
         missingSrcset:    missingSrcset.map(i => i.src).slice(0, 5),
         iframesWithoutLazy,
+        legacyFormatImages,
       },
       warnings: [
-        lazyAboveFold.length    > 0 && `${lazyAboveFold.length} above-fold image(s) marked lazy — hurts LCP`,
-        heroCandidates.length   > 0 && `${heroCandidates.length} large above-fold image(s) missing fetchpriority="high"`,
-        missingSrcset.length    > 0 && `${missingSrcset.length} image(s) > 200px wide missing srcset`,
+        lazyAboveFold.length      > 0 && `${lazyAboveFold.length} above-fold image(s) marked lazy — hurts LCP`,
+        heroCandidates.length     > 0 && `${heroCandidates.length} large above-fold image(s) missing fetchpriority="high"`,
+        missingSrcset.length      > 0 && `${missingSrcset.length} image(s) > 200px wide missing srcset`,
         iframesWithoutLazy.length > 0 && `${iframesWithoutLazy.length} third-party/below-fold iframe(s) without loading="lazy" — blocks main thread at load`,
+        legacyFormatImages.length > 0 && `${legacyFormatImages.length} image(s) > 30 KB served as JPEG/PNG — consider WebP/AVIF for 25-50% size savings`,
       ].filter(Boolean),
     };
-  });
+  }, imageFormats);
 }
 
 async function runBundleAudit(page) {
@@ -523,16 +533,25 @@ async function runScriptAudit(page) {
 
 async function runTouchTargetAudit(page) {
   return page.evaluate(() => {
-    const MIN_AA = 24;
+    const MIN_AA = 24, MIN_AAA = 44;
     const SEL = 'a[href], button, input, select, textarea, [role="button"], [role="link"], [role="checkbox"], [role="menuitem"], [role="tab"]';
-    const failing = [...document.querySelectorAll(SEL)].map(el => {
+    const all = [...document.querySelectorAll(SEL)].map(el => {
       const r = el.getBoundingClientRect();
       if (r.width === 0 && r.height === 0) return null;
       if (window.getComputedStyle(el).display === 'none') return null;
-      if (r.width >= MIN_AA && r.height >= MIN_AA) return null;
       return { tag: el.tagName, text: (el.textContent || el.getAttribute('aria-label') || '').trim().slice(0, 40), width: Math.round(r.width), height: Math.round(r.height) };
     }).filter(Boolean);
-    return { failingAA: failing.length, details: failing.slice(0, 10), warnings: failing.length > 0 ? [`${failing.length} interactive element(s) below 24×24px (WCAG 2.5.8)`] : [] };
+    const failing    = all.filter(e => e.width < MIN_AA  || e.height < MIN_AA);
+    const failingAAA = all.filter(e => (e.width >= MIN_AA && e.height >= MIN_AA) && (e.width < MIN_AAA || e.height < MIN_AAA));
+    return {
+      failingAA:  failing.length,
+      failingAAA: failingAAA.length,
+      details: failing.slice(0, 10),
+      warnings: [
+        failing.length    > 0 && `${failing.length} interactive element(s) below 24×24px (WCAG 2.5.8 AA)`,
+        failingAAA.length > 0 && `${failingAAA.length} interactive element(s) 24–43px — pass AA (2.5.8) but fail AAA (2.5.5 44px)`,
+      ].filter(Boolean),
+    };
   });
 }
 
@@ -652,6 +671,21 @@ async function runDomA11yAudit(page) {
     const menuRoleMisuse = [...document.querySelectorAll('[role="menu"],[role="menubar"]')]
       .filter(el => !!el.closest('nav') || !!el.closest('[role="navigation"]') || !!el.querySelector('a[href]'))
       .slice(0, 5).map(el => ({ tag: el.tagName.toLowerCase(), class: (el.className || '').trim().split(/\s+/)[0] || null }));
+    // <details> missing or empty <summary> (WCAG 4.1.2 — name, role, value)
+    const detailsMissingSummary = [...document.querySelectorAll('details')]
+      .filter(el => {
+        const s = el.querySelector('summary');
+        if (!s) return true;
+        return !s.textContent.trim() && !s.getAttribute('aria-label');
+      }).slice(0, 5).map(el => ({ id: el.id || null }));
+    // <meter>/<progress> missing accessible name (WCAG 4.1.2)
+    const meterProgressMissingLabel = [...document.querySelectorAll('meter, progress')]
+      .filter(el => {
+        if (el.getAttribute('aria-label') || el.getAttribute('aria-labelledby')) return false;
+        const id = el.id;
+        if (id) { try { if (document.querySelector(`label[for="${CSS.escape(id)}"]`)) return false; } catch {} }
+        return true;
+      }).slice(0, 5).map(el => ({ tag: el.tagName.toLowerCase(), id: el.id || null }));
     return {
       brokenAriaRefs: brokenAriaRefs.slice(0, 10),
       unlabeledInputs: unlabeled.length,
@@ -668,7 +702,9 @@ async function runDomA11yAudit(page) {
       missingAriaCurrent,
       rolePresentationFocusable: rolePresentationFocusable.length,
       menuRoleMisuse: menuRoleMisuse.length,
-      details: { duplicateIds, genericLinks, ariaHiddenInteractive, labelInNameViolations, iframesMissingTitle, positiveTabindex, ariaInvalidMissingMessage, rolePresentationFocusable, menuRoleMisuse },
+      detailsMissingSummary: detailsMissingSummary.length,
+      meterProgressMissingLabel: meterProgressMissingLabel.length,
+      details: { duplicateIds, genericLinks, ariaHiddenInteractive, labelInNameViolations, iframesMissingTitle, positiveTabindex, ariaInvalidMissingMessage, rolePresentationFocusable, menuRoleMisuse, detailsMissingSummary, meterProgressMissingLabel },
       warnings: [
         brokenAriaRefs.length > 0               && `${brokenAriaRefs.length} broken ARIA reference(s)`,
         unlabeled.length > 0                    && `${unlabeled.length} form input(s) missing accessible label (WCAG 1.3.1)`,
@@ -685,6 +721,8 @@ async function runDomA11yAudit(page) {
         missingAriaCurrent                      && 'Active nav link missing aria-current="page" — screen readers get no location indicator (WCAG 2.4.8)',
         rolePresentationFocusable.length > 0    && `${rolePresentationFocusable.length} focusable element(s) with role="none/presentation" — strips semantics but remains keyboard-reachable (WCAG 4.1.2)`,
         menuRoleMisuse.length > 0               && `${menuRoleMisuse.length} element(s) use role="menu" for navigation — use role="navigation" instead (WCAG 4.1.2)`,
+        detailsMissingSummary.length > 0        && `${detailsMissingSummary.length} <details> element(s) missing or empty <summary> — screen readers announce "Details" with no context (WCAG 4.1.2)`,
+        meterProgressMissingLabel.length > 0    && `${meterProgressMissingLabel.length} <meter>/<progress> element(s) missing accessible name (WCAG 4.1.2)`,
       ].filter(Boolean),
     };
   });
@@ -761,6 +799,8 @@ async function runLayoutAudit(page) {
     const contentVisibilityMissingIntrinsic = [...document.querySelectorAll('*')].filter(el => {
       try { const s = window.getComputedStyle(el); return s.contentVisibility === 'auto' && (!s.containIntrinsicSize || s.containIntrinsicSize === 'none 0px' || s.containIntrinsicSize === 'auto none'); } catch { return false; }
     }).length;
+    // WCAG 2.4.11 Focus Not Obscured: sticky top headers > 80px risk covering focused elements
+    const focusObscureRisk = stickyFixed.filter(sf => (sf.position === 'fixed' || sf.position === 'sticky') && sf.height > 80);
     return {
       hasHorizontalScroll, excessPx, wideElements, hiddenOverflowElements, stickyFixed,
       missingSafeArea: missingSafeArea.length,
@@ -768,6 +808,7 @@ async function runLayoutAudit(page) {
       willChangeCount,
       willChangeAll,
       contentVisibilityMissingIntrinsic,
+      focusObscureRisk: focusObscureRisk.length,
       warnings: [
         hasHorizontalScroll && `Page is ${excessPx}px wider than viewport — likely mobile breakage`,
         hiddenOverflowElements.length > 0 && `${hiddenOverflowElements.length} element(s) clip overflowing content (overflow:hidden)`,
@@ -777,6 +818,7 @@ async function runLayoutAudit(page) {
         willChangeCount > 4   && `${willChangeCount} elements with will-change set — excessive GPU layer promotion causes VRAM pressure on low-end mobile`,
         willChangeAll > 0     && `${willChangeAll} element(s) with will-change:all — promotes every property; use specific values`,
         contentVisibilityMissingIntrinsic > 0 && `${contentVisibilityMissingIntrinsic} element(s) with content-visibility:auto missing contain-intrinsic-size — causes CLS spike on scroll`,
+        focusObscureRisk.length > 0 && `${focusObscureRisk.length} sticky/fixed element(s) > 80px tall may fully obscure focused elements (WCAG 2.4.11)`,
       ].filter(Boolean),
     };
   });
@@ -981,16 +1023,30 @@ async function runMediaQueryAudit(page) {
       } catch {}
     }
     let prefersContrastRules = 0;
+    let hasSmoothScroll = false, hasSmoothScrollGuard = false;
     for (const sheet of document.styleSheets) {
       try {
         for (const rule of sheet.cssRules) {
           if (rule instanceof CSSMediaRule) {
             const cond = rule.conditionText || rule.media?.mediaText || '';
             if (/prefers-contrast/.test(cond)) prefersContrastRules++;
+            const isRMGuard = /prefers-reduced-motion\s*:\s*no-preference/.test(cond);
+            try {
+              for (const inner of rule.cssRules) {
+                if (inner instanceof CSSStyleRule && inner.style.getPropertyValue('scroll-behavior') === 'smooth') {
+                  hasSmoothScroll = true;
+                  if (isRMGuard) hasSmoothScrollGuard = true;
+                }
+              }
+            } catch {}
+          }
+          if (rule instanceof CSSStyleRule) {
+            if (rule.style.getPropertyValue('scroll-behavior') === 'smooth') hasSmoothScroll = true;
           }
         }
       } catch {}
     }
+    const unguardedSmoothScroll = hasSmoothScroll && !hasSmoothScrollGuard;
     return {
       hasDarkModeCSS:           darkModeRules > 0,
       darkModeCSSRuleCount:     darkModeRules,
@@ -999,11 +1055,13 @@ async function runMediaQueryAudit(page) {
       hasResponsiveBreakpoints: breakpointCount > 0,
       breakpointCount,
       hasPrefersContrastCSS:    prefersContrastRules > 0,
+      unguardedSmoothScroll,
       warnings: [
         darkModeRules        === 0 && 'No prefers-color-scheme:dark CSS — dark mode users see forced light theme',
         reducedMotionRules   === 0 && 'No prefers-reduced-motion:reduce CSS — animations play for motion-sensitive users',
         breakpointCount      === 0 && 'No responsive breakpoints found — layout may not adapt to mobile screens',
         prefersContrastRules === 0 && 'No prefers-contrast CSS — high-contrast mode users get no enhanced contrast',
+        unguardedSmoothScroll      && 'scroll-behavior:smooth outside prefers-reduced-motion:no-preference guard — animated scroll for users with vestibular disorders (WCAG 2.3.3)',
       ].filter(Boolean),
     };
   });
@@ -1052,19 +1110,50 @@ async function runFormUXAudit(page) {
     const missingInputMode = [...document.querySelectorAll('input[type="text"]:not([inputmode]), input:not([type])[placeholder]')]
       .filter(inp => NUMERIC_PATTERN.test([inp.name, inp.id, inp.getAttribute('placeholder'), inp.getAttribute('autocomplete')].filter(Boolean).join(' ')))
       .slice(0, 10).map(inp => ({ name: inp.name || inp.id || null, placeholder: (inp.getAttribute('placeholder') || '').slice(0, 40) }));
+    // input[type=number] misuse on non-numeric semantic data (strips leading zeros, accepts e/+/-)
+    const NUMBER_MISUSE_RE = /zip|postal|pin|cvv|cvc|csc|otp|ssn|dob|birthday|phone|mobile|fax|card.?num|account.?num|routing/i;
+    const numberInputMisuse = [...document.querySelectorAll('input[type="number"]')]
+      .filter(inp => NUMBER_MISUSE_RE.test([inp.name, inp.id, inp.getAttribute('placeholder')].filter(Boolean).join(' ')))
+      .slice(0, 5).map(inp => ({ name: inp.name || inp.id || null, placeholder: (inp.getAttribute('placeholder') || '').slice(0, 40) }));
+    // Extended WCAG 1.3.5: personal data fields missing appropriate autocomplete token
+    const PERSONAL_FIELDS = [
+      { re: /^name$|full.?name|your.?name/i,   token: 'name' },
+      { re: /first.?name|given.?name/i,          token: 'given-name' },
+      { re: /last.?name|family.?name|surname/i,  token: 'family-name' },
+      { re: /street|addr(ess)?[_-]?1?$/i,        token: 'street-address' },
+      { re: /postal|zip.?code|post.?code/i,       token: 'postal-code' },
+      { re: /^country$/i,                         token: 'country' },
+      { re: /birthday|birth.?date|^dob$/i,        token: 'bday' },
+      { re: /cc.?name|card.?holder|cardholder/i,  token: 'cc-name' },
+      { re: /cc.?number|card.?num(ber)?/i,        token: 'cc-number' },
+      { re: /new.?pass|create.?pass/i,            token: 'new-password' },
+    ];
+    const missingPersonalAutocomplete = [];
+    for (const { re, token } of PERSONAL_FIELDS) {
+      [...document.querySelectorAll('input[type="text"],input:not([type])')].forEach(inp => {
+        const key = [inp.name, inp.id, inp.getAttribute('placeholder')].filter(Boolean).join(' ');
+        if (!re.test(key)) return;
+        const ac = inp.getAttribute('autocomplete') || '';
+        if (!ac || ac === 'off' || ac === 'on') missingPersonalAutocomplete.push({ name: inp.name || inp.id || null, expectedToken: token });
+      });
+    }
     return {
       missingAutocomplete: missingAutocomplete.slice(0, 10),
       placeholderOnlyLabel: placeholderOnlyLabel.length,
       missingFieldset: missingFieldset.length,
       passwordAutocompleteOff: passwordAutocompleteOff.length,
       missingInputMode: missingInputMode.length,
-      details: { placeholderOnlyLabel, missingFieldset, passwordAutocompleteOff, missingInputMode },
+      numberInputMisuse: numberInputMisuse.length,
+      missingPersonalAutocomplete: missingPersonalAutocomplete.slice(0, 10).length,
+      details: { placeholderOnlyLabel, missingFieldset, passwordAutocompleteOff, missingInputMode, numberInputMisuse },
       warnings: [
-        missingAutocomplete.length > 0      && `${missingAutocomplete.length} input(s) missing autocomplete — mobile autofill won't work`,
-        placeholderOnlyLabel.length > 0     && `${placeholderOnlyLabel.length} input(s) use placeholder as only label — disappears on focus (WCAG 3.3.2)`,
-        missingFieldset.length > 0          && `${missingFieldset.length} radio/checkbox group(s) without <fieldset>+<legend> (WCAG 1.3.1)`,
-        passwordAutocompleteOff.length > 0  && `${passwordAutocompleteOff.length} password input(s) with autocomplete="off" — blocks password managers (WCAG 3.3.8)`,
-        missingInputMode.length > 0         && `${missingInputMode.length} numeric/tel-like text input(s) missing inputmode — wrong soft keyboard on mobile`,
+        missingAutocomplete.length > 0            && `${missingAutocomplete.length} input(s) missing autocomplete — mobile autofill won't work`,
+        placeholderOnlyLabel.length > 0           && `${placeholderOnlyLabel.length} input(s) use placeholder as only label — disappears on focus (WCAG 3.3.2)`,
+        missingFieldset.length > 0                && `${missingFieldset.length} radio/checkbox group(s) without <fieldset>+<legend> (WCAG 1.3.1)`,
+        passwordAutocompleteOff.length > 0        && `${passwordAutocompleteOff.length} password input(s) with autocomplete="off" — blocks password managers (WCAG 3.3.8)`,
+        missingInputMode.length > 0               && `${missingInputMode.length} numeric/tel-like text input(s) missing inputmode — wrong soft keyboard on mobile`,
+        numberInputMisuse.length > 0              && `${numberInputMisuse.length} input(s) use type="number" for non-numeric data — strips leading zeros, accepts e/+/-`,
+        missingPersonalAutocomplete.length > 0    && `${missingPersonalAutocomplete.length} personal data input(s) missing specific autocomplete token (WCAG 1.3.5)`,
       ].filter(Boolean),
     };
   });
@@ -1166,13 +1255,26 @@ async function runMediaAudit(page) {
       .filter(v => v.getAttribute('aria-hidden') !== 'true')
       .filter(v => ![...v.querySelectorAll('track')].some(t => t.kind === 'captions' || t.kind === 'subtitles'))
       .map(v => ({ src: v.currentSrc || v.querySelector('source')?.src || '(no src)' }));
+    // Audio elements: autoplay without controls (WCAG 1.4.2), no controls at all
+    const audios = [...document.querySelectorAll('audio')];
+    const audioAutoplayNoControls = audios
+      .filter(a => a.hasAttribute('autoplay') && !a.hasAttribute('controls'))
+      .slice(0, 5).map(a => ({ src: a.currentSrc || a.querySelector('source')?.src || '(no src)' }));
+    const audioMissingControls = audios
+      .filter(a => !a.hasAttribute('controls') && a.getAttribute('aria-hidden') !== 'true')
+      .slice(0, 5).map(a => ({ src: a.currentSrc || a.querySelector('source')?.src || '(no src)' }));
     return {
       videoCount: videos.length,
       autoplayWithoutMuted: autoplayWithoutMuted.slice(0, 5),
       missingCaptions: missingCaptions.slice(0, 5),
+      audioCount: audios.length,
+      audioAutoplayNoControls: audioAutoplayNoControls.length,
+      audioMissingControls: audioMissingControls.length,
       warnings: [
-        autoplayWithoutMuted.length > 0 && `${autoplayWithoutMuted.length} video(s) autoplay without muted attribute — browser may block + WCAG 1.4.2`,
-        missingCaptions.length > 0      && `${missingCaptions.length} video(s) missing captions track (WCAG 1.2.2)`,
+        autoplayWithoutMuted.length > 0    && `${autoplayWithoutMuted.length} video(s) autoplay without muted attribute — browser may block + WCAG 1.4.2`,
+        missingCaptions.length > 0         && `${missingCaptions.length} video(s) missing captions track (WCAG 1.2.2)`,
+        audioAutoplayNoControls.length > 0 && `${audioAutoplayNoControls.length} audio(s) autoplay without controls — user cannot pause (WCAG 1.4.2)`,
+        audioMissingControls.length > 0    && `${audioMissingControls.length} audio(s) without controls — users cannot control playback`,
       ].filter(Boolean),
     };
   });
@@ -1958,7 +2060,7 @@ function routeSlug(route) {
 }
 
 // ── Shared full-page audit ────────────────────────────────────────────────────
-async function runFullAudit(page, outPath, outBase, browser) {
+async function runFullAudit(page, outPath, outBase, browser, imageFormats = {}) {
   const [
     meta, images, scripts, touchTargets, headings, domA11y, layout, bundle, fonts,
     typography, interactiveStates, cursor, viewportUnits, mediaQuerySupport, formUX,
@@ -1966,7 +2068,7 @@ async function runFullAudit(page, outPath, outBase, browser) {
     landmarks, tableA11y, dialogs, widgets, security, statusMessages, domSize, preconnect, rtl,
   ] = await Promise.all([
     runMetaAudit(page),
-    runImageAudit(page),
+    runImageAudit(page, imageFormats),
     runScriptAudit(page),
     runTouchTargetAudit(page),
     runHeadingAudit(page),
@@ -2117,7 +2219,10 @@ async function singlePage() {
   if (anyAdvFlag) { const detected = await detectFeatures(page); advanced = await runAdvanced(page, outBase, detected); }
 
   let auditResult = {};
-  if (url !== 'about:blank') auditResult = await runFullAudit(page, outArg, outBase, browser);
+  if (url !== 'about:blank') {
+    const imageFormats = tracker ? tracker.getImageFormats() : {};
+    auditResult = await runFullAudit(page, outArg, outBase, browser, imageFormats);
+  }
 
   let cwv;
   if (cwvMode && url !== 'about:blank') cwv = await runCWV(page);
@@ -2147,7 +2252,7 @@ async function pageChecks(page, pageUrl, outPath, route, browser) {
   const errors = [];
   const errHandler = e => errors.push(e.message);
   page.on('pageerror', errHandler);
-  setupResponseTracking(page);
+  const tracker2 = setupResponseTracking(page);
   try {
     await page.setViewportSize({ width, height });
     if (cwvMode) await installCWVObserver(page);
@@ -2156,7 +2261,8 @@ async function pageChecks(page, pageUrl, outPath, route, browser) {
     const a11y        = await runAxe(page);
     let advanced;
     if (anyAdvFlag) { const detected = await detectFeatures(page); advanced = await runAdvanced(page, outPath.replace(/\.png$/i, ''), detected); }
-    const auditResult = await runFullAudit(page, outPath, outPath.replace(/\.png$/i, ''), browser);
+    const imageFormats2 = tracker2 ? tracker2.getImageFormats() : {};
+    const auditResult = await runFullAudit(page, outPath, outPath.replace(/\.png$/i, ''), browser, imageFormats2);
     let cwv;
     if (cwvMode) cwv = await runCWV(page);
     let focusAuditResult;
