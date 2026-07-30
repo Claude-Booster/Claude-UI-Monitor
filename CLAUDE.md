@@ -82,6 +82,53 @@ Also check these JSON fields from the desktop pw-e2e-test.js output (included au
 - `colorOnly.colorOnlyLinks[]` — inline links distinguished from body text only by color (WCAG 1.4.1); flag if > 0
 - `textSelectability.count` — text blocks with `user-select:none` that users can't copy; flag if > 0
 - `bundle.jsKB` / `bundle.cssKB` / `bundle.totalTransferKB` — resource sizes for jank diagnosis
+- `landmarks.hasMain` / `.hasNav` / `.hasBanner` / `.hasContentinfo` — ARIA landmark presence (WCAG 2.4.1); flag any false
+- `landmarks.warnings[]` — missing landmark regions; flag if not empty
+- `tableA11y.issues[]` — tables missing <th>, <caption>, or scope attribute (WCAG 1.3.1); flag if > 0
+- `dialogs.issues[]` — visible dialogs missing aria-modal or accessible name (WCAG 4.1.2); flag if > 0
+- `widgets.toggleButtonsMissingExpanded` — toggle buttons with aria-controls but no aria-expanded (WCAG 4.1.2); flag if > 0
+- `widgets.tabIssues` — [role="tab"] elements missing tablist parent or aria-selected; flag if > 0
+- `widgets.carouselCount` — carousels detected; check `.details.carouselIssues[]` for missing prev/next buttons
+- `security.unsafeTargetBlank` — links with target="_blank" missing rel="noopener" (tab-napping); flag if > 0
+- `security.mixedContent` — elements loading http:// on an https page (browser blocks); flag if > 0
+- `statusMessages.missingAriaLive` — toast/alert/notification containers without aria-live (WCAG 4.1.3); flag if > 0
+- `domSize.totalNodes` — total DOM nodes; flag if > 1500 (Lighthouse threshold)
+- `preconnect.missingPreconnect` — third-party origins without preconnect/dns-prefetch hints; flag if > 0
+- `rtl.issues[]` — physical CSS directional properties on RTL pages (margin-left, float, text-align); flag if > 0
+- `meta.metaDescription.missing` — page missing <meta name="description"> (SEO); flag if true
+- `meta.openGraphMissing[]` — missing og:title / og:description / og:image tags (social sharing); flag if not empty
+- `meta.noindex` — page is noindex (search engine excluded); flag if true
+- `meta.hasFavicon` — page has a favicon link; flag if false
+- `domA11y.duplicateIds[]` — duplicate id attributes breaking ARIA references (WCAG 4.1.1); flag if > 0
+- `domA11y.genericLinks` — links whose text is "click here", "read more", etc. (WCAG 2.4.4); flag if > 0
+- `domA11y.ariaHiddenInteractive` — interactive elements hidden from AT with aria-hidden (WCAG 4.1.2); flag if > 0
+- `domA11y.hasSkipLink` — page has a skip-navigation link (WCAG 2.4.1); flag if false
+- `domA11y.labelInNameViolations` — visible label text not in accessible name (WCAG 2.5.3); flag if > 0
+- `domA11y.iframesMissingTitle` — <iframe> elements without a title attribute (WCAG 4.1.2); flag if > 0
+- `formUX.placeholderOnlyLabel` — inputs using placeholder as sole label (disappears on focus); flag if > 0
+- `formUX.missingFieldset` — radio/checkbox groups not wrapped in <fieldset><legend> (WCAG 1.3.1); flag if > 0
+- `typography.longLines` — text blocks estimated > 80 chars/line (WCAG 1.4.8 readability); flag if > 0
+- `typography.allCapsBlocks` — text-transform:uppercase on blocks > 30 chars (readability); flag if > 0
+- `layout.missingSafeArea` — fixed-bottom elements without env(safe-area-inset-bottom) (iPhone notch); flag if > 0
+- `layout.consecutiveBr` — consecutive <br><br> used for spacing instead of CSS margins; flag if > 0
+- `fonts.missingFontPreload` — @font-face custom fonts without matching <link rel="preload"> hint; flag if > 0
+- `cwv.inp` / `cwv.ratings.inp` — Interaction to Next Paint (new CWV replacing FID); flag if > 200ms
+- `scripts.firstPartyRenderBlocking` — first-party render-blocking scripts (defer/async missing); flag if > 0
+- `scripts.stylesheetInBody` — `<link rel="stylesheet">` inside `<body>` causing FOUC and blocking LCP; flag if > 0
+- `images.iframesWithoutLazy` — third-party/below-fold iframes without `loading="lazy"` (blocks main thread); flag if > 0
+- `meta.missingTitle` — empty or missing `<title>` element (WCAG 2.4.2); flag if true
+- `meta.orientationLock` — CSS hides content in one orientation (WCAG 1.3.4); flag if true
+- `mediaQuerySupport.hasPrefersContrastCSS` — CSS media query `prefers-contrast` present; flag if false
+- `domA11y.positiveTabindex` — elements with `tabindex > 0` disrupting focus order (WCAG 2.4.3); flag if > 0
+- `domA11y.ariaInvalidMissingMessage` — `aria-invalid="true"` without linked error message (WCAG 3.3.1); flag if > 0
+- `domA11y.missingAriaCurrent` — active nav link missing `aria-current="page"` (WCAG 2.4.8); flag if true
+- `domA11y.rolePresentationFocusable` — `role="none/presentation"` on natively focusable elements (WCAG 4.1.2); flag if > 0
+- `domA11y.menuRoleMisuse` — `role="menu"` used for navigation instead of actions (WCAG 4.1.2); flag if > 0
+- `widgets.comboboxIssues` — `[role="combobox"]` missing aria-expanded or aria-controls→listbox (WCAG 4.1.2); flag if > 0
+- `formUX.passwordAutocompleteOff` — password inputs with `autocomplete="off"` blocking password managers (WCAG 3.3.8); flag if > 0
+- `formUX.missingInputMode` — numeric/tel-like text inputs missing `inputmode` (wrong soft keyboard on mobile); flag if > 0
+- `layout.willChangeCount` / `layout.willChangeAll` — `will-change` on > 4 elements wastes VRAM; `will-change:all` is always wrong
+- `layout.contentVisibilityMissingIntrinsic` — `content-visibility:auto` without `contain-intrinsic-size` causes CLS; flag if > 0
 
 **Step 7a — Advanced UI check** (only when desktop JSON output contains an `advanced` field)
 - **FPS** (`advanced.fps`): < 55 = flag jank | 30–54 = reduced | < 30 = janky; investigate CSS animation performance
@@ -114,12 +161,13 @@ dynamic port discovery, framework detection, and framework-specific checks.
 
 ## Known UI Projects
 
-Edit `~/.claude/project-registry.json` to register your projects. The hook discovers live
-servers automatically via port scanning — this table is for quick reference only.
-
 | Project directory | Framework | Dev port | Start command |
 |---|---|---|---|
-| *(add your projects to project-registry.json)* | | | |
+| `fullstack-demo` | Angular 17 + GraphQL | 4200 | `ng serve` (in frontend/) |
+| `codex proj 1` (Scribbly) | SvelteKit 2 + TipTap | 5173 | `npm run dev` |
+| `SEO Audit` | Streamlit | 8501 | `streamlit run app.py` |
+| `Sonnet Comp` (NexusFlow) | Flask dashboard | 5001 | `python web_dashboard.py` |
+| `Claude Code Comp` (AgentPulse) | Flask dashboard | 8090 | `python web_dashboard.py` |
 
 Ports and framework fingerprints: `~/.claude/framework-registry.json`
 Per-project metadata (path, start command): `~/.claude/project-registry.json`
@@ -173,6 +221,11 @@ Report any CSS custom property mismatches as additional issues.
   - `--required-fields` — required form fields missing `aria-required="true"` → `requiredFields`
   - `--animation-fill` — animations missing `fill-mode:forwards/both` (element snaps back after animation) → `animationDurations.missingFillMode`
   - `--empty-states` — stuck loading spinners + empty list/grid containers with no empty-state UI → `emptyStates`
+  - `--text-contrast` — WCAG 1.4.3 contrast check for body text, headings, labels, list items (samples up to 120 elements) → `bodyTextContrast`
+  - `--placeholder-contrast` — contrast check for CSS ::placeholder text against input background (WCAG 1.4.3) → `placeholderContrast`
+  - `--non-text-contrast` — WCAG 1.4.11 contrast check for form input borders against their parent background → `nonTextContrast`
+  - `--pwa` — PWA readiness: checks for <link rel="manifest"> and registered service worker → `pwa`
+  - `--sri` — Subresource Integrity check: flags external <script src> and <link rel="stylesheet"> missing integrity attribute → `sri`
 - **Figma baseline export**: `node ~/.claude/scripts/figma-baseline.js --file=<key> --nodes=<id1,id2>` — fetch Figma frames as PNG baselines (requires `FIGMA_ACCESS_TOKEN` in `~/.claude/.env`). Use `--list` to see all frames.
 - **Design token check**: `node ~/.claude/scripts/figma-token-check.js <url> --tokens=~/.claude/design-tokens.json` — compare CSS custom properties in live app against a design token JSON file.
 - **Snapshot baselines**: `cd ~/.claude/scripts && npm run snapshots:update` / `npm run snapshots`
@@ -189,13 +242,13 @@ Report any CSS custom property mismatches as additional issues.
 4. **Find frame node IDs**: `node ~/.claude/scripts/figma-baseline.js --file=<key> --list` prints all frames with their IDs.
 5. **Design tokens** (Starter compatible): Install the free **Tokens Studio** Figma plugin → export tokens → save as `~/.claude/design-tokens.json` (flat `{ "--css-var": "value" }` or W3C DTCG format). Then `figma-token-check.js` reads it. The Variables REST API (Enterprise only) is NOT used.
 
-> Note: `get_variable_defs` MCP tool requires Figma Desktop App — skip it on Starter/remote setups.
+> Note: `get_variable_defs` MCP tool requires Figma Desktop app — skip it on Starter/remote setups.
 
 ## Adding a New Project
 
 1. Add an entry to `~/.claude/project-registry.json` (name, path, framework, port, start command).
 2. If the framework is new, add it to `~/.claude/framework-registry.json`.
-3. Add the project to the Known UI Projects table above.
+3. Add the project to the table above.
 4. Optionally add a `CLAUDE.md` in the project directory with project-specific UI notes.
 
 ## Auto-fix control

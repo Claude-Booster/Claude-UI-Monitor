@@ -4,45 +4,67 @@
 // Multi-page:  node pw-e2e-test.js <url> <prefix> [w] [h] --routes=auto|/r1,/r2 [--nav=link-crawl|tab-click]
 //
 // Always-on for real URLs (zero overhead):
-//   meta              title, viewport, blocksZoom (WCAG 1.4.4), lang, charset, dir
+//   meta              title, viewport, blocksZoom (WCAG 1.4.4), lang, charset, dir,
+//                     metaDescription (length), og: tags, noindex detection, favicon, CSP/referrer meta
 //   images            broken, missingAlt, oversized, lazy-above-fold, missingFetchPriority, missingSrcset, missingHeight
-//   scripts           render-blocking third-party scripts (delays page display)
+//   scripts           render-blocking third-party + first-party scripts (delays page display)
 //   touchTargets      interactive elements < 24×24px (WCAG 2.5.8)
 //   headings          h1 count, heading level skips (WCAG 2.4.6)
-//   domA11y           broken ARIA ID refs, unlabeled inputs, icon-only buttons, title-only interactive (WCAG 1.3.1)
-//   layout            horizontal scroll, overflow-hidden clipping, sticky/fixed elements covering content
+//   domA11y           broken ARIA ID refs, unlabeled inputs, icon-only buttons, title-only interactive,
+//                     duplicate IDs (WCAG 4.1.1), generic link text (WCAG 2.4.4),
+//                     aria-hidden on interactive elements (WCAG 4.1.2), skip link (WCAG 2.4.1),
+//                     label-in-name violations (WCAG 2.5.3), iframe missing title (WCAG 4.1.2)
+//   layout            horizontal scroll, overflow-hidden clipping, sticky/fixed covering content,
+//                     fixed bottom elements missing safe-area-inset-bottom (notched devices),
+//                     consecutive <br> spacing hacks
 //   bundle            JS/CSS/image KB, largest + slowest resources
-//   fonts             loaded/failed, FOIT/FOUT risk
-//   typography        font-size < 16px on mobile, line-height < 1.2, ellipsis truncation
+//   fonts             loaded/failed, FOIT/FOUT risk, custom fonts missing <link rel=preload>
+//   typography        font-size < 16px on mobile, line-height < 1.2, ellipsis truncation,
+//                     estimated line length > 80 chars (WCAG 1.4.8), text-transform:uppercase blocks
 //   interactiveStates :hover/:focus/:disabled CSS rules, outline:0 without :focus-visible replacement
 //   cursor            interactive elements missing cursor:pointer, visible elements with pointer-events:none
 //   viewportUnits     height:100vh rules that clip on mobile (use dvh instead)
 //   mediaQuerySupport prefers-color-scheme:dark, prefers-reduced-motion, responsive breakpoints presence
-//   formUX            missing autocomplete attributes on email/password/tel inputs
+//   formUX            missing autocomplete on email/password/tel, placeholder-as-only-label (WCAG 3.3.2),
+//                     radio/checkbox groups without fieldset+legend (WCAG 1.3.1)
 //   animationDurations animations > 1s, transitions > 300ms, infinite animations (WCAG 2.2.2)
 //   stacking          z-index > 9999 anomalies
 //   svgA11y           informative SVGs missing role="img" and <title> element
 //   mediaA11y         video autoplay without muted (WCAG 1.4.2), missing captions track (WCAG 1.2.2)
 //   colorOnly         inline links distinguished from body text only by color (WCAG 1.4.1)
 //   textSelectability text content blocked from copying with user-select:none
+//   landmarks         main/nav/banner/contentinfo landmark regions (WCAG 2.4.1)
+//   tableA11y         data tables missing <th>, scope, or <caption> (WCAG 1.3.1)
+//   dialogs           dialog/modal missing aria-modal or accessible name (WCAG 4.1.2)
+//   widgets           toggle buttons missing aria-expanded, tabs ARIA pattern, carousel issues
+//   security          target=_blank without rel=noopener; mixed http:// content on https pages
+//   statusMessages    notification/toast/alert containers missing aria-live or role (WCAG 4.1.3)
+//   domSize           total DOM node count; warns if > 1500 (Lighthouse threshold)
+//   preconnect        third-party origins without preconnect/dns-prefetch hints
+//   rtl               physical directional CSS on dir=rtl pages (should use logical props)
 //
 // Flag-gated checks:
-//   --dark-mode         screenshot + axe in dark mode → darkMode, darkModeA11y
-//   --cwv               LCP, CLS+sources, FCP, TTFB, TBT → cwv
-//   --compare=<path>    pixel-diff vs baseline → diff
-//   --reduced-motion    prefers-reduced-motion screenshot → reducedMotion
-//   --forced-colors     forced-colors: active screenshot → forcedColors
-//   --print             media: print screenshot → print
-//   --no-js             JS-disabled screenshot → noJs
-//   --focus-audit       keyboard focus ring audit → focusAudit
-//   --link-check        broken internal link check (HEAD, cap 20) → linkCheck
-//   --reflow            320px viewport layout check (WCAG 1.4.10) → reflow
-//   --text-spacing      WCAG 1.4.12 text-spacing override clipping check → textSpacing
-//   --paint-complexity  expensive CSS paint properties on large elements → paintComplexity
-//   --state-contrast    WCAG 1.4.3 contrast in default + hover state → stateContrast
-//   --required-fields   required form fields missing aria-required="true" → requiredFields
-//   --animation-fill    animations missing fill-mode:forwards/both (snap-back glitch) → animationDurations.missingFillMode
-//   --empty-states      stuck loading spinners + empty list/grid containers → emptyStates
+//   --dark-mode            screenshot + axe in dark mode → darkMode, darkModeA11y
+//   --cwv                  LCP, CLS+sources, FCP, TTFB, TBT, INP estimate → cwv
+//   --compare=<path>       pixel-diff vs baseline → diff
+//   --reduced-motion       prefers-reduced-motion screenshot → reducedMotion
+//   --forced-colors        forced-colors: active screenshot → forcedColors
+//   --print                media: print screenshot → print
+//   --no-js                JS-disabled screenshot → noJs
+//   --focus-audit          keyboard focus ring audit → focusAudit
+//   --link-check           broken internal link check (HEAD, cap 20) → linkCheck
+//   --reflow               320px viewport layout check (WCAG 1.4.10) → reflow
+//   --text-spacing         WCAG 1.4.12 text-spacing override clipping check → textSpacing
+//   --paint-complexity     expensive CSS paint properties on large elements → paintComplexity
+//   --state-contrast       WCAG 1.4.3 contrast in default + hover state → stateContrast
+//   --required-fields      required form fields missing aria-required="true" → requiredFields
+//   --animation-fill       animations missing fill-mode:forwards/both (snap-back glitch) → animationDurations.missingFillMode
+//   --empty-states         stuck loading spinners + empty list/grid containers → emptyStates
+//   --text-contrast        WCAG 1.4.3 contrast on body text (p, li, headings) → bodyTextContrast
+//   --placeholder-contrast placeholder text contrast < 4.5:1 (WCAG 1.4.3) → placeholderContrast
+//   --non-text-contrast    input border/checkbox/radio contrast < 3:1 (WCAG 1.4.11) → nonTextContrast
+//   --pwa                  PWA readiness: manifest link + service worker → pwaReadiness
+//   --sri                  external scripts/styles missing integrity attribute → sri
 //
 // Advanced flags (auto-detected or explicit):
 //   --detect-advanced  auto-enable based on CSS animations, WebGL, canvas, GSAP, etc.
@@ -98,9 +120,14 @@ const reflowMode         = flags['reflow']           === 'true';
 const textSpacingMode    = flags['text-spacing']     === 'true';
 const paintComplexity    = flags['paint-complexity'] === 'true';
 const stateContrast      = flags['state-contrast']   === 'true';
-const requiredFieldsMode = flags['required-fields']  === 'true';
-const animFillMode       = flags['animation-fill']   === 'true';
-const emptyStatesMode    = flags['empty-states']     === 'true';
+const requiredFieldsMode     = flags['required-fields']        === 'true';
+const animFillMode           = flags['animation-fill']         === 'true';
+const emptyStatesMode        = flags['empty-states']           === 'true';
+const textContrastMode       = flags['text-contrast']          === 'true';
+const placeholderContrastMode= flags['placeholder-contrast']   === 'true';
+const nonTextContrastMode    = flags['non-text-contrast']      === 'true';
+const pwaMode                = flags['pwa']                    === 'true';
+const sriMode                = flags['sri']                    === 'true';
 
 // ── Response tracking (image formats only) ────────────────────────────────────
 function setupResponseTracking(page) {
@@ -264,7 +291,68 @@ async function runMetaAudit(page) {
       blocksZoom && 'Viewport blocks user zoom (WCAG 1.4.4)',
       !lang      && 'Missing <html lang> attribute (WCAG 3.1.1)',
     ].filter(Boolean);
-    return { title: document.title || null, viewport: viewportContent, blocksZoom, lang, charset, dir, issues };
+    // metaDescription
+    const descEl = document.querySelector('meta[name="description"]');
+    const descContent = descEl ? (descEl.getAttribute('content') || '') : null;
+    const metaDescription = {
+      content:  descContent ? descContent.slice(0, 200) : null,
+      missing:  descContent === null,
+      tooShort: descContent !== null && descContent.length < 50,
+      tooLong:  descContent !== null && descContent.length > 160,
+      length:   descContent !== null ? descContent.length : 0,
+    };
+    // Open Graph
+    const og = name => document.querySelector(`meta[property="og:${name}"]`)?.getAttribute('content') ?? null;
+    const openGraph = { title: og('title'), description: og('description'), image: og('image'), url: og('url') };
+    const openGraphMissing = ['title','description','image','url'].filter(k => !openGraph[k]);
+    // robots noindex
+    const robotsMeta = document.querySelector('meta[name="robots"]');
+    const noindex = robotsMeta ? /noindex/i.test(robotsMeta.getAttribute('content') || '') : false;
+    // favicon
+    const hasFavicon = [...document.querySelectorAll('link')].some(l => /^(shortcut )?icon|apple-touch-icon/i.test(l.getAttribute('rel') || ''));
+    // security meta
+    const hasCSPMeta      = !!document.querySelector('meta[http-equiv="Content-Security-Policy"]');
+    const hasReferrerMeta = !!document.querySelector('meta[name="referrer"]');
+    const pageTitle = document.title?.trim() || '';
+    const missingTitle = !pageTitle;
+    // Orientation lock detection (WCAG 1.3.4) — CSS hiding content in one orientation
+    let orientationLock = false;
+    try {
+      for (const sheet of document.styleSheets) {
+        try {
+          for (const rule of sheet.cssRules) {
+            if (rule instanceof CSSMediaRule) {
+              const cond = rule.conditionText || rule.media?.mediaText || '';
+              if (/orientation\s*:\s*(portrait|landscape)/.test(cond)) {
+                for (const sub of rule.cssRules) {
+                  if (sub instanceof CSSStyleRule) {
+                    const d = sub.style.display, v = sub.style.visibility, h = sub.style.height;
+                    if (d === 'none' || v === 'hidden' || h === '0px' || h === '0') { orientationLock = true; break; }
+                  }
+                }
+              }
+            }
+            if (orientationLock) break;
+          }
+        } catch {}
+        if (orientationLock) break;
+      }
+    } catch {}
+    const metaWarnings = [
+      missingTitle                      && 'Missing or empty <title> — screen readers announce blank page name (WCAG 2.4.2)',
+      metaDescription.missing           && 'Missing <meta name="description"> — search snippet will be auto-generated',
+      metaDescription.tooShort          && `Meta description too short (${metaDescription.length} chars, min 50)`,
+      metaDescription.tooLong           && `Meta description too long (${metaDescription.length} chars, max 160) — will be truncated`,
+      openGraphMissing.length > 0       && `Missing og: tags: ${openGraphMissing.join(', ')} — social unfurling will fail`,
+      noindex                           && 'Page has meta robots=noindex — will not appear in search results',
+      !hasFavicon                       && 'No favicon link — browser makes wasted /favicon.ico request',
+      orientationLock                   && 'CSS hides content in one orientation — may lock device to one orientation (WCAG 1.3.4)',
+    ].filter(Boolean);
+    return {
+      title: pageTitle || null, missingTitle, viewport: viewportContent, blocksZoom, lang, charset, dir, issues,
+      metaDescription, openGraph, openGraphMissing, noindex, hasFavicon, hasCSPMeta, hasReferrerMeta, orientationLock,
+      warnings: metaWarnings,
+    };
   });
 }
 
@@ -299,6 +387,15 @@ async function runImageAudit(page) {
     const lazyAboveFold  = imgs.filter(i => i.foldIssue === 'LAZY_ABOVE_FOLD');
     const heroCandidates = imgs.filter(i => i.isHeroCandidate);
     const missingSrcset  = imgs.filter(i => i.missingSrcset);
+    // Below-fold third-party iframes without loading="lazy" (CWV: TBT, TTI)
+    const HEAVY_DOMAINS = /youtube\.com|youtu\.be|vimeo\.com|maps\.google|maps\.googleapis|player\.vimeo|open\.spotify|twitter\.com\/widgets|platform\.twitter|facebook\.com\/plugins/;
+    const iframesWithoutLazy = [...document.querySelectorAll('iframe[src]')]
+      .filter(el => {
+        const r = el.getBoundingClientRect();
+        const isBelowFold = r.top > vh;
+        const isHeavy = HEAVY_DOMAINS.test(el.src || '');
+        return (isBelowFold || isHeavy) && el.getAttribute('loading') !== 'lazy';
+      }).slice(0, 10).map(el => ({ src: (el.src || '').slice(0, 80), belowFold: el.getBoundingClientRect().top > vh }));
     return {
       total:   imgs.length,
       broken:  imgs.filter(i => i.broken).length,
@@ -309,18 +406,21 @@ async function runImageAudit(page) {
       missingFetchPriority: heroCandidates.length,
       missingSrcset:        missingSrcset.length,
       missingHeight:        imgs.filter(i => i.missingHeight).length,
+      iframesWithoutLazy:   iframesWithoutLazy.length,
       details: {
-        broken:       imgs.filter(i => i.broken).map(i => i.src),
-        missingAlt:   imgs.filter(i => i.missingAlt).map(i => i.src || '(no src)'),
-        oversized:    imgs.filter(i => i.oversized).map(i => ({ src: i.src, natural: `${i.naturalW}×${i.naturalH}`, display: `${i.displayW}×${i.displayH}` })),
-        lazyAboveFold:lazyAboveFold.map(i => i.src),
-        heroMissingFP:heroCandidates.map(i => i.src),
-        missingSrcset:missingSrcset.map(i => i.src).slice(0, 5),
+        broken:           imgs.filter(i => i.broken).map(i => i.src),
+        missingAlt:       imgs.filter(i => i.missingAlt).map(i => i.src || '(no src)'),
+        oversized:        imgs.filter(i => i.oversized).map(i => ({ src: i.src, natural: `${i.naturalW}×${i.naturalH}`, display: `${i.displayW}×${i.displayH}` })),
+        lazyAboveFold:    lazyAboveFold.map(i => i.src),
+        heroMissingFP:    heroCandidates.map(i => i.src),
+        missingSrcset:    missingSrcset.map(i => i.src).slice(0, 5),
+        iframesWithoutLazy,
       },
       warnings: [
-        lazyAboveFold.length  > 0 && `${lazyAboveFold.length} above-fold image(s) marked lazy — hurts LCP`,
-        heroCandidates.length > 0 && `${heroCandidates.length} large above-fold image(s) missing fetchpriority="high"`,
-        missingSrcset.length  > 0 && `${missingSrcset.length} image(s) > 200px wide missing srcset`,
+        lazyAboveFold.length    > 0 && `${lazyAboveFold.length} above-fold image(s) marked lazy — hurts LCP`,
+        heroCandidates.length   > 0 && `${heroCandidates.length} large above-fold image(s) missing fetchpriority="high"`,
+        missingSrcset.length    > 0 && `${missingSrcset.length} image(s) > 200px wide missing srcset`,
+        iframesWithoutLazy.length > 0 && `${iframesWithoutLazy.length} third-party/below-fold iframe(s) without loading="lazy" — blocks main thread at load`,
       ].filter(Boolean),
     };
   });
@@ -357,12 +457,38 @@ async function runFontAudit(page) {
     for (const sheet of document.styleSheets) {
       try { for (const rule of sheet.cssRules) { if (rule instanceof CSSFontFaceRule) fontFaceRules.push({ family: rule.style.getPropertyValue('font-family').replace(/['"]/g, ''), display: rule.style.getPropertyValue('font-display') || 'auto' }); } } catch {}
     }
+    // Font preload hints
+    const fontFaceUrls = [];
+    for (const sheet of document.styleSheets) {
+      try {
+        for (const rule of sheet.cssRules) {
+          if (rule instanceof CSSFontFaceRule) {
+            const src = rule.style.getPropertyValue('src') || '';
+            const matches = src.match(/url\(['"]?([^'")\s]+)['"]?\)/g) || [];
+            for (const m of matches) {
+              const u = m.replace(/^url\(['"]?/, '').replace(/['"]?\)$/, '');
+              if (u && !u.startsWith('data:')) fontFaceUrls.push(u);
+            }
+          }
+        }
+      } catch {}
+    }
+    const preloadFonts = new Set([...document.querySelectorAll('link[rel="preload"][as="font"]')].map(l => {
+      try { return new URL(l.href).pathname.split('/').pop(); } catch { return null; }
+    }).filter(Boolean));
+    const missingFontPreload = fontFaceUrls.filter(u => {
+      try { const fname = new URL(u, location.href).pathname.split('/').pop(); return fname && !preloadFonts.has(fname); } catch { return false; }
+    }).slice(0, 5);
     return {
       loaded:   fontFaces.filter(f => f.status === 'loaded').length,
       failed:   fontFaces.filter(f => f.status === 'error').map(f => f.family),
       foitRisk: fontFaceRules.filter(f => f.display === 'auto' || f.display === 'block').map(f => f.family),
       foutRisk: fontFaceRules.filter(f => f.display === 'swap').map(f => f.family),
       optimal:  fontFaceRules.filter(f => f.display === 'optional' || f.display === 'fallback').map(f => f.family),
+      missingFontPreload: missingFontPreload.length,
+      warnings: missingFontPreload.length > 0
+        ? [`${missingFontPreload.length} custom font(s) without <link rel="preload" as="font"> — causes late discovery and FOIT/FOUT`]
+        : [],
     };
   });
 }
@@ -375,15 +501,22 @@ async function runScriptAudit(page) {
       try { origin = new URL(s.src).origin; } catch { return null; }
       return { isThirdParty: origin !== pageOrigin, isAsync: s.async, isDefer: s.defer, isModule: s.type === 'module' };
     }).filter(Boolean);
-    const thirdParty     = scripts.filter(s => s.isThirdParty);
-    const renderBlocking = thirdParty.filter(s => !s.isAsync && !s.isDefer && !s.isModule);
+    const thirdParty              = scripts.filter(s => s.isThirdParty);
+    const renderBlocking          = thirdParty.filter(s => !s.isAsync && !s.isDefer && !s.isModule);
+    const firstPartyRenderBlocking= scripts.filter(s => !s.isThirdParty && !s.isAsync && !s.isDefer && !s.isModule).length;
+    // <link rel="stylesheet"> inside <body> causes FOUC and blocks rendering
+    const stylesheetInBody = document.body ? [...document.body.querySelectorAll('link[rel="stylesheet"]')].length : 0;
     return {
-      total:           scripts.length,
-      thirdPartyCount: thirdParty.length,
-      renderBlocking:  renderBlocking.length,
-      warnings: renderBlocking.length > 0
-        ? [`${renderBlocking.length} render-blocking third-party script(s) delay page display`]
-        : [],
+      total:                   scripts.length,
+      thirdPartyCount:         thirdParty.length,
+      renderBlocking:          renderBlocking.length,
+      firstPartyRenderBlocking,
+      stylesheetInBody,
+      warnings: [
+        renderBlocking.length > 0           && `${renderBlocking.length} render-blocking third-party script(s) delay page display`,
+        firstPartyRenderBlocking > 0        && `${firstPartyRenderBlocking} render-blocking first-party script(s) — add async/defer/type=module`,
+        stylesheetInBody > 0                && `${stylesheetInBody} <link rel="stylesheet"> in <body> — causes FOUC and delays LCP`,
+      ].filter(Boolean),
     };
   });
 }
@@ -462,16 +595,96 @@ async function runDomA11yAudit(page) {
         tag: el.tagName.toLowerCase(),
         title: (el.getAttribute('title') || '').slice(0, 40),
       }));
+    // Duplicate IDs (WCAG 4.1.1)
+    const idMap = {};
+    document.querySelectorAll('[id]').forEach(el => { idMap[el.id] = (idMap[el.id] || 0) + 1; });
+    const duplicateIds = Object.entries(idMap).filter(([, c]) => c > 1).slice(0, 10).map(([id, count]) => ({ id, count }));
+    // Generic link text (WCAG 2.4.4)
+    const GENERIC_TEXT = /^(click here|read more|here|more|learn more|this|details|link|download|continue|start|go|see more|view more|show more|find out more|button)$/i;
+    const genericLinks = [...document.querySelectorAll('a[href]')]
+      .filter(a => { const t = a.textContent.trim(); return GENERIC_TEXT.test(t); })
+      .slice(0, 10).map(a => ({ text: a.textContent.trim(), href: (a.getAttribute('href') || '').slice(0, 60) }));
+    // aria-hidden on interactive/focusable elements (WCAG 4.1.2)
+    const ariaHiddenInteractive = [...document.querySelectorAll('[aria-hidden="true"]')]
+      .filter(el => el.matches('a[href],button,input,select,textarea,[tabindex]:not([tabindex="-1"])') ||
+        !!el.querySelector('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'))
+      .slice(0, 10).map(el => ({ tag: el.tagName.toLowerCase(), id: el.id || null, class: (el.className || '').trim().split(/\s+/)[0] || null }));
+    // Skip link presence (WCAG 2.4.1)
+    const hasSkipLink = [...document.querySelectorAll('a[href^="#"]')].slice(0, 10)
+      .some(a => /skip|jump|bypass|main|content/i.test(a.textContent));
+    // Label-in-name violations (WCAG 2.5.3)
+    const labelInNameViolations = [...document.querySelectorAll('[aria-label]')]
+      .filter(el => {
+        if (!el.matches('button,a[href],[role="button"],[role="link"]')) return false;
+        const visible  = el.textContent.trim().toLowerCase().replace(/\s+/g, ' ');
+        if (!visible || visible.length < 2) return false;
+        const ariaLbl  = (el.getAttribute('aria-label') || '').toLowerCase();
+        return !ariaLbl.includes(visible);
+      }).slice(0, 10).map(el => ({ tag: el.tagName.toLowerCase(), visible: el.textContent.trim().slice(0, 40), ariaLabel: (el.getAttribute('aria-label') || '').slice(0, 40) }));
+    // iframe missing title (WCAG 4.1.2)
+    const iframesMissingTitle = [...document.querySelectorAll('iframe')]
+      .filter(el => { const t = el.getAttribute('title'); return !t || !t.trim(); })
+      .slice(0, 10).map(el => ({ src: (el.getAttribute('src') || '').slice(0, 80) }));
+    // Positive tabindex values (WCAG 2.4.3) — shatters focus order
+    const positiveTabindex = [...document.querySelectorAll('[tabindex]')]
+      .filter(el => parseInt(el.getAttribute('tabindex'), 10) > 0)
+      .slice(0, 10).map(el => ({ tag: el.tagName.toLowerCase(), tabindex: el.getAttribute('tabindex'), id: el.id || null }));
+    // aria-invalid=true without linked error message (WCAG 3.3.1)
+    const ariaInvalidMissingMessage = [...document.querySelectorAll('[aria-invalid="true"]')]
+      .filter(el => {
+        const descId = el.getAttribute('aria-describedby');
+        if (!descId) return true;
+        const desc = document.getElementById(descId.trim().split(/\s+/)[0]);
+        return !desc || !desc.textContent.trim();
+      }).slice(0, 10).map(el => ({ tag: el.tagName.toLowerCase(), id: el.id || null }));
+    // Active nav link missing aria-current (WCAG 2.4.8 / 4.1.2)
+    const navLinks = [...document.querySelectorAll('nav a[href],[role="navigation"] a[href]')];
+    const pathname = location.pathname.replace(/\/$/, '') || '/';
+    const missingAriaCurrent = navLinks.some(a => {
+      const href = (a.getAttribute('href') || '').split('?')[0].split('#')[0].replace(/\/$/, '') || '/';
+      return href === pathname && !a.getAttribute('aria-current');
+    });
+    // role=none/presentation on natively focusable elements (WCAG 4.1.2)
+    const rolePresentationFocusable = [...document.querySelectorAll('[role="none"],[role="presentation"]')]
+      .filter(el => el.matches('a[href],button,input,select,textarea') || parseInt(el.getAttribute('tabindex'), 10) >= 0)
+      .slice(0, 10).map(el => ({ tag: el.tagName.toLowerCase(), role: el.getAttribute('role') }));
+    // role=menu misuse on navigation (APG / WCAG 4.1.2)
+    const menuRoleMisuse = [...document.querySelectorAll('[role="menu"],[role="menubar"]')]
+      .filter(el => !!el.closest('nav') || !!el.closest('[role="navigation"]') || !!el.querySelector('a[href]'))
+      .slice(0, 5).map(el => ({ tag: el.tagName.toLowerCase(), class: (el.className || '').trim().split(/\s+/)[0] || null }));
     return {
       brokenAriaRefs: brokenAriaRefs.slice(0, 10),
       unlabeledInputs: unlabeled.length,
       iconOnlyButtons: iconOnlyBtns.length,
       titleOnlyInteractive: titleOnly.length,
+      duplicateIds: duplicateIds.length,
+      genericLinks: genericLinks.length,
+      ariaHiddenInteractive: ariaHiddenInteractive.length,
+      hasSkipLink,
+      labelInNameViolations: labelInNameViolations.length,
+      iframesMissingTitle: iframesMissingTitle.length,
+      positiveTabindex: positiveTabindex.length,
+      ariaInvalidMissingMessage: ariaInvalidMissingMessage.length,
+      missingAriaCurrent,
+      rolePresentationFocusable: rolePresentationFocusable.length,
+      menuRoleMisuse: menuRoleMisuse.length,
+      details: { duplicateIds, genericLinks, ariaHiddenInteractive, labelInNameViolations, iframesMissingTitle, positiveTabindex, ariaInvalidMissingMessage, rolePresentationFocusable, menuRoleMisuse },
       warnings: [
-        brokenAriaRefs.length > 0 && `${brokenAriaRefs.length} broken ARIA reference(s)`,
-        unlabeled.length > 0      && `${unlabeled.length} form input(s) missing accessible label (WCAG 1.3.1)`,
-        iconOnlyBtns.length > 0   && `${iconOnlyBtns.length} button(s) with no accessible name — icon-only, add aria-label`,
-        titleOnly.length > 0      && `${titleOnly.length} interactive element(s) use title-only label (invisible on touch devices)`,
+        brokenAriaRefs.length > 0               && `${brokenAriaRefs.length} broken ARIA reference(s)`,
+        unlabeled.length > 0                    && `${unlabeled.length} form input(s) missing accessible label (WCAG 1.3.1)`,
+        iconOnlyBtns.length > 0                 && `${iconOnlyBtns.length} button(s) with no accessible name — icon-only, add aria-label`,
+        titleOnly.length > 0                    && `${titleOnly.length} interactive element(s) use title-only label (invisible on touch devices)`,
+        duplicateIds.length > 0                 && `${duplicateIds.length} duplicate ID(s) — breaks ARIA label associations (WCAG 4.1.1)`,
+        genericLinks.length > 0                 && `${genericLinks.length} link(s) with non-descriptive text like "click here" (WCAG 2.4.4)`,
+        ariaHiddenInteractive.length > 0        && `${ariaHiddenInteractive.length} interactive/focusable element(s) inside aria-hidden="true" (WCAG 4.1.2)`,
+        !hasSkipLink                            && 'No skip-navigation link found — keyboard users must tab through all nav (WCAG 2.4.1)',
+        labelInNameViolations.length > 0        && `${labelInNameViolations.length} element(s) where aria-label doesn't include visible text (WCAG 2.5.3)`,
+        iframesMissingTitle.length > 0          && `${iframesMissingTitle.length} <iframe>(s) missing title attribute (WCAG 4.1.2)`,
+        positiveTabindex.length > 0             && `${positiveTabindex.length} element(s) with positive tabindex — disrupts focus order (WCAG 2.4.3)`,
+        ariaInvalidMissingMessage.length > 0    && `${ariaInvalidMissingMessage.length} aria-invalid element(s) missing linked error message (WCAG 3.3.1)`,
+        missingAriaCurrent                      && 'Active nav link missing aria-current="page" — screen readers get no location indicator (WCAG 2.4.8)',
+        rolePresentationFocusable.length > 0    && `${rolePresentationFocusable.length} focusable element(s) with role="none/presentation" — strips semantics but remains keyboard-reachable (WCAG 4.1.2)`,
+        menuRoleMisuse.length > 0               && `${menuRoleMisuse.length} element(s) use role="menu" for navigation — use role="navigation" instead (WCAG 4.1.2)`,
       ].filter(Boolean),
     };
   });
@@ -511,12 +724,59 @@ async function runLayoutAudit(page) {
         const r = el.getBoundingClientRect();
         return { tag: el.tagName.toLowerCase(), class: (el.className || '').trim().split(/\s+/)[0] || null, position: s.position, height: Math.round(r.height) };
       });
+    // Safe-area-inset-bottom: fixed bottom elements on notched devices
+    let hasSafeAreaCss = false;
+    try {
+      for (const sheet of document.styleSheets) {
+        try { for (const rule of sheet.cssRules) { if (rule.cssText && rule.cssText.includes('safe-area-inset-bottom')) { hasSafeAreaCss = true; break; } } } catch {}
+        if (hasSafeAreaCss) break;
+      }
+    } catch {}
+    const missingSafeArea = hasSafeAreaCss ? [] : [...document.querySelectorAll('*')]
+      .filter(el => {
+        const s = window.getComputedStyle(el);
+        if (s.position !== 'fixed' && s.position !== 'sticky') return false;
+        const r = el.getBoundingClientRect();
+        if (r.height < 44) return false;
+        const bottom = parseFloat(s.bottom);
+        return !isNaN(bottom) && bottom === 0;
+      }).slice(0, 5).map(el => ({ tag: el.tagName.toLowerCase(), class: (el.className || '').trim().split(/\s+/)[0] || null, height: Math.round(el.getBoundingClientRect().height) }));
+    // Consecutive <br> spacing hacks
+    let consecutiveBrCount = 0;
+    const brs = [...document.querySelectorAll('br')];
+    for (let i = 0; i < brs.length - 1; i++) {
+      let next = brs[i].nextSibling;
+      while (next && next.nodeType === 3 && !next.textContent.trim()) next = next.nextSibling;
+      if (next && next.nodeName === 'BR') consecutiveBrCount++;
+    }
+    // will-change overuse: > 4 promoted elements wastes VRAM on low-end devices
+    let willChangeCount = 0, willChangeAll = 0;
+    try {
+      for (const el of document.querySelectorAll('*')) {
+        const wc = window.getComputedStyle(el).willChange;
+        if (wc && wc !== 'auto') { willChangeCount++; if (wc === 'all') willChangeAll++; }
+      }
+    } catch {}
+    // content-visibility:auto without contain-intrinsic-size causes massive CLS
+    const contentVisibilityMissingIntrinsic = [...document.querySelectorAll('*')].filter(el => {
+      try { const s = window.getComputedStyle(el); return s.contentVisibility === 'auto' && (!s.containIntrinsicSize || s.containIntrinsicSize === 'none 0px' || s.containIntrinsicSize === 'auto none'); } catch { return false; }
+    }).length;
     return {
       hasHorizontalScroll, excessPx, wideElements, hiddenOverflowElements, stickyFixed,
+      missingSafeArea: missingSafeArea.length,
+      consecutiveBr: consecutiveBrCount,
+      willChangeCount,
+      willChangeAll,
+      contentVisibilityMissingIntrinsic,
       warnings: [
         hasHorizontalScroll && `Page is ${excessPx}px wider than viewport — likely mobile breakage`,
         hiddenOverflowElements.length > 0 && `${hiddenOverflowElements.length} element(s) clip overflowing content (overflow:hidden)`,
         stickyFixed.length > 0 && `${stickyFixed.length} sticky/fixed element(s) at top:0 or bottom:0 (height ${stickyFixed[0]?.height}px) may cover scrolled-to content`,
+        missingSafeArea.length > 0 && `${missingSafeArea.length} fixed bottom element(s) may be obscured by iPhone home indicator — add padding: env(safe-area-inset-bottom)`,
+        consecutiveBrCount > 0 && `${consecutiveBrCount} consecutive <br> pair(s) used for spacing — use margin/padding instead`,
+        willChangeCount > 4   && `${willChangeCount} elements with will-change set — excessive GPU layer promotion causes VRAM pressure on low-end mobile`,
+        willChangeAll > 0     && `${willChangeAll} element(s) with will-change:all — promotes every property; use specific values`,
+        contentVisibilityMissingIntrinsic > 0 && `${contentVisibilityMissingIntrinsic} element(s) with content-visibility:auto missing contain-intrinsic-size — causes CLS spike on scroll`,
       ].filter(Boolean),
     };
   });
@@ -546,14 +806,37 @@ async function runTypographyAudit(page) {
       if (s.textOverflow === 'ellipsis' && (s.overflow === 'hidden' || s.overflowX === 'hidden'))
         truncated.push({ tag, selector });
     }
+    // Line length > 80 chars (WCAG 1.4.8 guideline)
+    const longLineEls = [];
+    for (const el of [...document.querySelectorAll('p, li, td, dd, blockquote')].slice(0, 100)) {
+      const s2 = window.getComputedStyle(el);
+      const w  = el.getBoundingClientRect().width;
+      if (w < 200) continue;
+      const fs = parseFloat(s2.fontSize) || 16;
+      const estimated = Math.round(w / (fs * 0.48));
+      if (estimated > 80 && el.textContent.trim().length > 40)
+        longLineEls.push({ tag: el.tagName.toLowerCase(), estimated });
+    }
+    // All-caps text blocks (readability concern)
+    const allCapsEls = [...document.querySelectorAll('p, li, h1, h2, h3, h4, h5, h6, td, span, div')]
+      .filter(el => {
+        const s2 = window.getComputedStyle(el);
+        if (s2.textTransform !== 'uppercase') return false;
+        return el.textContent.trim().length > 30;
+      }).slice(0, 10).map(el => ({ tag: el.tagName.toLowerCase(), length: el.textContent.trim().length, text: el.textContent.trim().slice(0, 40) }));
     const unique = arr => [...new Map(arr.map(x => [x.selector, x])).values()].slice(0, 10);
     const us = unique(smallText), ut = unique(tightLineHeight), uu = unique(truncated);
+    const ul = [...new Map(longLineEls.map(x => [x.tag + x.estimated, x])).values()].slice(0, 5);
     return {
       smallText: us, tightLineHeight: ut, truncated: uu,
+      longLines: ul.length, allCapsBlocks: allCapsEls.length,
+      details: { longLines: ul, allCapsBlocks: allCapsEls },
       warnings: [
-        us.length > 0 && `${us.length} element(s) with font-size < 16px on mobile viewport — may trigger iOS auto-zoom`,
-        ut.length > 0 && `${ut.length} element(s) with line-height < 1.2 (WCAG 1.4.12)`,
-        uu.length > 0 && `${uu.length} element(s) truncating text with ellipsis — content hidden from users`,
+        us.length > 0       && `${us.length} element(s) with font-size < 16px on mobile viewport — may trigger iOS auto-zoom`,
+        ut.length > 0       && `${ut.length} element(s) with line-height < 1.2 (WCAG 1.4.12)`,
+        uu.length > 0       && `${uu.length} element(s) truncating text with ellipsis — content hidden from users`,
+        ul.length > 0       && `${ul.length} text container(s) estimated > 80 chars/line — reduces readability (WCAG 1.4.8)`,
+        allCapsEls.length > 0 && `${allCapsEls.length} block(s) with text-transform:uppercase on > 30 chars — reduces reading speed`,
       ].filter(Boolean),
     };
   });
@@ -697,6 +980,17 @@ async function runMediaQueryAudit(page) {
         }
       } catch {}
     }
+    let prefersContrastRules = 0;
+    for (const sheet of document.styleSheets) {
+      try {
+        for (const rule of sheet.cssRules) {
+          if (rule instanceof CSSMediaRule) {
+            const cond = rule.conditionText || rule.media?.mediaText || '';
+            if (/prefers-contrast/.test(cond)) prefersContrastRules++;
+          }
+        }
+      } catch {}
+    }
     return {
       hasDarkModeCSS:           darkModeRules > 0,
       darkModeCSSRuleCount:     darkModeRules,
@@ -704,10 +998,12 @@ async function runMediaQueryAudit(page) {
       reducedMotionCSSRuleCount:reducedMotionRules,
       hasResponsiveBreakpoints: breakpointCount > 0,
       breakpointCount,
+      hasPrefersContrastCSS:    prefersContrastRules > 0,
       warnings: [
-        darkModeRules    === 0 && 'No prefers-color-scheme:dark CSS — dark mode users see forced light theme',
-        reducedMotionRules === 0 && 'No prefers-reduced-motion:reduce CSS — animations play for motion-sensitive users',
-        breakpointCount  === 0 && 'No responsive breakpoints found — layout may not adapt to mobile screens',
+        darkModeRules        === 0 && 'No prefers-color-scheme:dark CSS — dark mode users see forced light theme',
+        reducedMotionRules   === 0 && 'No prefers-reduced-motion:reduce CSS — animations play for motion-sensitive users',
+        breakpointCount      === 0 && 'No responsive breakpoints found — layout may not adapt to mobile screens',
+        prefersContrastRules === 0 && 'No prefers-contrast CSS — high-contrast mode users get no enhanced contrast',
       ].filter(Boolean),
     };
   });
@@ -730,9 +1026,46 @@ async function runFormUXAudit(page) {
         }
       } catch {}
     }
+    // Placeholder-as-only-label (WCAG 3.3.2): input has placeholder but no persistent label
+    const placeholderOnlyLabel = [...document.querySelectorAll('input[placeholder]:not([type=hidden]):not([type=button]):not([type=submit]):not([type=reset])')]
+      .filter(inp => {
+        if (inp.getAttribute('aria-label') || inp.getAttribute('aria-labelledby')) return false;
+        if (inp.closest('label')) return false;
+        const id = inp.id;
+        if (id) { try { if (document.querySelector(`label[for="${CSS.escape(id)}"]`)) return false; } catch {} }
+        return true;
+      }).slice(0, 10).map(inp => ({ type: inp.type || 'text', name: inp.name || inp.id || null, placeholder: (inp.getAttribute('placeholder') || '').slice(0, 40) }));
+    // Radio/checkbox groups without fieldset+legend (WCAG 1.3.1)
+    const groupedInputs = {};
+    [...document.querySelectorAll('input[type=radio][name], input[type=checkbox][name]')].forEach(inp => {
+      (groupedInputs[inp.name] = groupedInputs[inp.name] || []).push(inp);
+    });
+    const missingFieldset = Object.entries(groupedInputs)
+      .filter(([, els]) => els.length >= 2 && !els[0].closest('fieldset'))
+      .slice(0, 5).map(([name]) => ({ name }));
+    // autocomplete=off on password inputs blocks password managers (WCAG 3.3.8)
+    const passwordAutocompleteOff = [...document.querySelectorAll('input[type="password"]')]
+      .filter(inp => { const ac = (inp.getAttribute('autocomplete') || '').toLowerCase(); return ac === 'off' || ac === 'false'; })
+      .slice(0, 5).map(inp => ({ name: inp.name || inp.id || null }));
+    // inputmode absent on numeric/tel-like text inputs (mobile UX)
+    const NUMERIC_PATTERN = /phone|tel|zip|postal|pin|cvv|card|otp|ssn|dob|date|code|fax/i;
+    const missingInputMode = [...document.querySelectorAll('input[type="text"]:not([inputmode]), input:not([type])[placeholder]')]
+      .filter(inp => NUMERIC_PATTERN.test([inp.name, inp.id, inp.getAttribute('placeholder'), inp.getAttribute('autocomplete')].filter(Boolean).join(' ')))
+      .slice(0, 10).map(inp => ({ name: inp.name || inp.id || null, placeholder: (inp.getAttribute('placeholder') || '').slice(0, 40) }));
     return {
       missingAutocomplete: missingAutocomplete.slice(0, 10),
-      warnings: missingAutocomplete.length > 0 ? [`${missingAutocomplete.length} input(s) missing autocomplete — mobile autofill won't work`] : [],
+      placeholderOnlyLabel: placeholderOnlyLabel.length,
+      missingFieldset: missingFieldset.length,
+      passwordAutocompleteOff: passwordAutocompleteOff.length,
+      missingInputMode: missingInputMode.length,
+      details: { placeholderOnlyLabel, missingFieldset, passwordAutocompleteOff, missingInputMode },
+      warnings: [
+        missingAutocomplete.length > 0      && `${missingAutocomplete.length} input(s) missing autocomplete — mobile autofill won't work`,
+        placeholderOnlyLabel.length > 0     && `${placeholderOnlyLabel.length} input(s) use placeholder as only label — disappears on focus (WCAG 3.3.2)`,
+        missingFieldset.length > 0          && `${missingFieldset.length} radio/checkbox group(s) without <fieldset>+<legend> (WCAG 1.3.1)`,
+        passwordAutocompleteOff.length > 0  && `${passwordAutocompleteOff.length} password input(s) with autocomplete="off" — blocks password managers (WCAG 3.3.8)`,
+        missingInputMode.length > 0         && `${missingInputMode.length} numeric/tel-like text input(s) missing inputmode — wrong soft keyboard on mobile`,
+      ].filter(Boolean),
     };
   });
 }
@@ -920,6 +1253,8 @@ async function installCWVObserver(page) {
       }).observe({ type: 'layout-shift', buffered: true });
     } catch {}
     try { new PerformanceObserver(list => { list.getEntries().forEach(e => window.__vitals.longTasks.push({ duration: Math.round(e.duration), startTime: Math.round(e.startTime) })); }).observe({ type: 'longtask', buffered: true }); } catch {}
+    // INP: collect event-timing durations (buffered = captures already-dispatched events)
+    try { window.__vitals.eventDelays = []; new PerformanceObserver(list => { list.getEntries().forEach(e => { if (e.duration > 0) window.__vitals.eventDelays.push(e.duration); }); }).observe({ type: 'event', durationThreshold: 0, buffered: true }); } catch {}
   });
 }
 
@@ -936,15 +1271,18 @@ async function runCWV(page) {
       const ttfb   = nav.responseStart ? Math.round(nav.responseStart) : null;
       const tasks  = window.__vitals?.longTasks || [];
       const tbt    = Math.round(tasks.reduce((s, t) => s + Math.max(0, t.duration - 50), 0));
+      // INP: 98th-percentile event duration
+      const delays = (window.__vitals?.eventDelays || []).sort((a, b) => a - b);
+      const inp    = delays.length ? Math.round(delays[Math.max(0, Math.floor(delays.length * 0.98) - 1)]) : null;
       const rate   = (v, g, ni) => v == null ? null : v <= g ? 'good' : v <= ni ? 'needs-improvement' : 'poor';
       return {
         lcp: lcp != null ? Math.round(lcp) : null,
         cls: cls != null ? parseFloat(cls.toFixed(4)) : null,
         fcp: fcp != null ? Math.round(fcp) : null,
-        ttfb, tbt,
+        ttfb, tbt, inp,
         clsSources: (window.__vitals?.shifts || []).sort((a, b) => b.value - a.value).slice(0, 5),
         longTasks:  tasks.sort((a, b) => b.duration - a.duration).slice(0, 5),
-        ratings: { lcp: rate(lcp, 2500, 4000), cls: rate(cls, 0.1, 0.25), fcp: rate(fcp, 1800, 3000), tbt: rate(tbt, 200, 600) },
+        ratings: { lcp: rate(lcp, 2500, 4000), cls: rate(cls, 0.1, 0.25), fcp: rate(fcp, 1800, 3000), tbt: rate(tbt, 200, 600), inp: rate(inp, 200, 500) },
       };
     });
   } catch (e) { return { error: e.message }; }
@@ -1273,6 +1611,320 @@ async function runEmptyStatesAudit(page) {
   });
 }
 
+// ── New always-on audit functions ─────────────────────────────────────────────
+
+async function runLandmarkAudit(page) {
+  return page.evaluate(() => {
+    const has = sel => !!document.querySelector(sel);
+    const hasMain        = has('main') || has('[role="main"]');
+    const hasNav         = has('nav')  || has('[role="navigation"]');
+    const hasBanner      = has('header[role="banner"]') || has('[role="banner"]') || has('header');
+    const hasContentinfo = has('footer[role="contentinfo"]') || has('[role="contentinfo"]') || has('footer');
+    return {
+      hasMain, hasNav, hasBanner, hasContentinfo,
+      warnings: [
+        !hasMain        && 'No <main> landmark — screen reader users cannot skip to main content (WCAG 2.4.1)',
+        !hasNav         && 'No <nav> landmark — navigation region not identified for assistive technology',
+      ].filter(Boolean),
+    };
+  });
+}
+
+async function runTableA11yAudit(page) {
+  return page.evaluate(() => {
+    const tables = [...document.querySelectorAll('table')].filter(t => { const r = t.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
+    if (!tables.length) return { count: 0, issues: [], warnings: [] };
+    const issues = tables.slice(0, 10).map(table => {
+      const hasCaption = !!table.querySelector('caption') || !!table.getAttribute('aria-label') || !!table.getAttribute('aria-labelledby');
+      const thEls = [...table.querySelectorAll('th')];
+      const hasTh  = thEls.length > 0;
+      const thWithScope = thEls.filter(th => th.getAttribute('scope')).length;
+      return { class: (table.className || '').trim().split(/\s+/)[0] || null, hasCaption, hasTh, thWithScope, thCount: thEls.length };
+    }).filter(i => !i.hasCaption || !i.hasTh || (i.hasTh && i.thWithScope < i.thCount));
+    return {
+      count: tables.length,
+      issues: issues.slice(0, 5),
+      warnings: [
+        issues.some(i => !i.hasTh)                            && 'Table(s) missing <th> header cells (WCAG 1.3.1)',
+        issues.some(i => !i.hasCaption)                       && 'Table(s) missing <caption> or aria-label (WCAG 1.3.1)',
+        issues.some(i => i.hasTh && i.thWithScope < i.thCount) && 'Table <th> element(s) missing scope attribute',
+      ].filter(Boolean),
+    };
+  });
+}
+
+async function runDialogAudit(page) {
+  return page.evaluate(() => {
+    const dialogs = [...document.querySelectorAll('dialog,[role="dialog"],[role="alertdialog"]')]
+      .filter(el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
+    const issues = dialogs.map(el => ({
+      tag:        el.tagName.toLowerCase(),
+      hasAriaModal: el.getAttribute('aria-modal') === 'true',
+      hasLabel:   !!(el.getAttribute('aria-labelledby') || el.getAttribute('aria-label')),
+    })).filter(d => !d.hasAriaModal || !d.hasLabel);
+    return {
+      count:  dialogs.length,
+      issues: issues.slice(0, 5),
+      warnings: [
+        issues.some(d => !d.hasAriaModal) && 'Dialog(s) missing aria-modal="true" (WCAG 4.1.2)',
+        issues.some(d => !d.hasLabel)     && 'Dialog(s) missing accessible name via aria-labelledby/aria-label (WCAG 4.1.2)',
+      ].filter(Boolean),
+    };
+  });
+}
+
+async function runWidgetAudit(page) {
+  return page.evaluate(() => {
+    // Toggle buttons with aria-controls but missing aria-expanded
+    const toggleBtns = [...document.querySelectorAll('button[aria-controls],[role="button"][aria-controls]')]
+      .filter(el => el.getAttribute('aria-expanded') === null)
+      .slice(0, 10).map(el => ({ tag: el.tagName.toLowerCase(), text: (el.textContent || el.getAttribute('aria-label') || '').trim().slice(0, 40), controls: el.getAttribute('aria-controls') }));
+    // Tabs pattern
+    const tabEls    = [...document.querySelectorAll('[role="tab"]')];
+    const tabIssues = tabEls.slice(0, 10).reduce((acc, tab) => {
+      const ok = !!tab.closest('[role="tablist"]') && tab.getAttribute('aria-selected') !== null;
+      if (!ok) acc.push({ text: tab.textContent.trim().slice(0, 30), hasTablist: !!tab.closest('[role="tablist"]'), hasSelected: tab.getAttribute('aria-selected') !== null });
+      return acc;
+    }, []);
+    // Carousel/slider
+    const carousels = [...document.querySelectorAll('[class*="carousel"],[class*="slider"],[class*="swiper"],[class*="splide"],[class*="glide"]')]
+      .filter(el => { const r = el.getBoundingClientRect(); return r.width > 100 && r.height > 50; });
+    const carouselIssues = carousels.slice(0, 5).map(el => ({
+      class:        (el.className || '').trim().split(/\s+/)[0],
+      hasPrevNext:  !!(el.querySelector('button') || el.querySelector('[role="button"]')),
+      hasRoleDesc:  !!el.getAttribute('aria-roledescription'),
+    }));
+    // Combobox missing aria-expanded / aria-controls (APG / WCAG 4.1.2)
+    const comboboxIssues = [...document.querySelectorAll('[role="combobox"]')].slice(0, 10).reduce((acc, el) => {
+      const missingExpanded = el.getAttribute('aria-expanded') === null;
+      const controlsId = el.getAttribute('aria-controls') || el.getAttribute('aria-owns');
+      const missingListbox = el.getAttribute('aria-expanded') === 'true' && (!controlsId || !document.getElementById(controlsId)?.matches('[role="listbox"]'));
+      if (missingExpanded || missingListbox) acc.push({ id: el.id || null, missingExpanded, missingListbox });
+      return acc;
+    }, []);
+    return {
+      toggleButtonsMissingExpanded: toggleBtns.length,
+      tabIssues: tabIssues.length,
+      carouselCount: carousels.length,
+      comboboxIssues: comboboxIssues.length,
+      details: { toggleBtns: toggleBtns.slice(0, 5), tabIssues: tabIssues.slice(0, 5), carouselIssues, comboboxIssues },
+      warnings: [
+        toggleBtns.length > 0                          && `${toggleBtns.length} toggle button(s) missing aria-expanded (WCAG 4.1.2)`,
+        tabIssues.length > 0                           && `${tabIssues.length} [role="tab"] element(s) missing tablist parent or aria-selected (WCAG 4.1.2)`,
+        carouselIssues.some(c => !c.hasPrevNext)       && 'Carousel(s) missing previous/next navigation buttons (WCAG 2.1.1)',
+        comboboxIssues.length > 0                      && `${comboboxIssues.length} combobox element(s) missing aria-expanded or aria-controls→listbox (WCAG 4.1.2)`,
+      ].filter(Boolean),
+    };
+  });
+}
+
+async function runSecurityAudit(page) {
+  return page.evaluate(() => {
+    // target=_blank without rel=noopener/noreferrer (tab-napping)
+    const unsafeBlank = [...document.querySelectorAll('a[target="_blank"]')]
+      .filter(a => { const rel = (a.getAttribute('rel') || '').split(/\s+/); return !rel.includes('noopener') && !rel.includes('noreferrer'); })
+      .slice(0, 10).map(a => ({ href: (a.getAttribute('href') || '').slice(0, 80), text: a.textContent.trim().slice(0, 40) }));
+    // Mixed content (http:// on https: page)
+    const mixedContent = location.protocol === 'https:' ? (() => {
+      const found = [];
+      for (const attr of ['src','href','action','data']) {
+        for (const el of document.querySelectorAll(`[${attr}^="http://"]`)) {
+          if (el.tagName === 'A') continue;
+          found.push({ tag: el.tagName.toLowerCase(), attr, value: (el.getAttribute(attr) || '').slice(0, 80) });
+        }
+      }
+      return found.slice(0, 10);
+    })() : [];
+    return {
+      unsafeTargetBlank: unsafeBlank.length,
+      mixedContent: mixedContent.length,
+      details: { unsafeBlank: unsafeBlank.slice(0, 5), mixedContent: mixedContent.slice(0, 5) },
+      warnings: [
+        unsafeBlank.length > 0  && `${unsafeBlank.length} link(s) with target="_blank" missing rel="noopener" — tab-napping vulnerability`,
+        mixedContent.length > 0 && `${mixedContent.length} element(s) load http:// content on https page — browser will block`,
+      ].filter(Boolean),
+    };
+  });
+}
+
+async function runStatusMessageAudit(page) {
+  return page.evaluate(() => {
+    const sels = ['[class*="toast"]','[class*="alert"]','[class*="notification"]','[class*="snackbar"]','[class*="banner"]','[class*="feedback"]','[role="status"]','[role="alert"]','[aria-live]'];
+    const all  = [...new Set(sels.flatMap(s => { try { return [...document.querySelectorAll(s)]; } catch { return []; } }))];
+    const missingLive = all.filter(el => {
+      const role = el.getAttribute('role'), live = el.getAttribute('aria-live');
+      return !live && role !== 'alert' && role !== 'status' && role !== 'log' && role !== 'timer';
+    }).slice(0, 10).map(el => ({ tag: el.tagName.toLowerCase(), class: (el.className || '').trim().split(/\s+/)[0] || null, role: el.getAttribute('role') || null }));
+    return {
+      count: all.length,
+      missingAriaLive: missingLive.length,
+      warnings: missingLive.length > 0 ? [`${missingLive.length} status/notification container(s) missing aria-live or role="status/alert" (WCAG 4.1.3)`] : [],
+    };
+  });
+}
+
+async function runDomSizeAudit(page) {
+  return page.evaluate(() => {
+    const total = document.querySelectorAll('*').length;
+    return {
+      totalNodes: total,
+      warnings: total > 3000 ? [`DOM has ${total} nodes — severely exceeds Lighthouse 1500-node threshold; layout recalculation is slow`]
+              : total > 1500 ? [`DOM has ${total} nodes — exceeds Lighthouse 1500-node recommendation`]
+              : [],
+    };
+  });
+}
+
+async function runPreconnectAudit(page) {
+  return page.evaluate(() => {
+    const pageOrigin  = location.origin;
+    const resources   = performance.getEntriesByType('resource');
+    const thirdOrigins= [...new Set(resources.map(r => { try { return new URL(r.name).origin; } catch { return null; } }).filter(o => o && o !== pageOrigin))];
+    const hinted      = new Set([...document.querySelectorAll('link[rel="preconnect"],link[rel="dns-prefetch"]')].map(l => { try { return new URL(l.href).origin; } catch { return null; } }).filter(Boolean));
+    const missing     = thirdOrigins.filter(o => !hinted.has(o)).slice(0, 10);
+    return {
+      thirdPartyOrigins:  thirdOrigins.length,
+      preconnected:       hinted.size,
+      missingPreconnect:  missing.length,
+      details: missing,
+      warnings: missing.length > 0 ? [`${missing.length} third-party origin(s) without preconnect/dns-prefetch — adds DNS+TCP+TLS latency`] : [],
+    };
+  });
+}
+
+async function runRtlAudit(page) {
+  return page.evaluate(() => {
+    const dir = (document.documentElement.getAttribute('dir') || document.body?.getAttribute('dir') || '').toLowerCase();
+    if (dir !== 'rtl') return { isRtl: false, issues: [], warnings: [] };
+    const PHYSICAL = ['margin-left','margin-right','padding-left','padding-right','border-left','border-right','border-left-width','border-right-width'];
+    const issues = [];
+    for (const sheet of document.styleSheets) {
+      try {
+        for (const rule of sheet.cssRules) {
+          if (!(rule instanceof CSSStyleRule)) continue;
+          const sel = (rule.selectorText || '').slice(0, 60);
+          for (const p of PHYSICAL) { const v = rule.style.getPropertyValue(p); if (v) { issues.push({ selector: sel, property: p, value: v.slice(0, 30) }); break; } }
+          const fl = rule.style.getPropertyValue('float'), ta = rule.style.getPropertyValue('text-align');
+          if (fl === 'left' || fl === 'right') issues.push({ selector: sel, property: 'float', value: fl });
+          if (ta === 'left' || ta === 'right') issues.push({ selector: sel, property: 'text-align', value: ta });
+        }
+      } catch {}
+    }
+    const unique = [...new Map(issues.map(x => [x.selector + x.property, x])).values()].slice(0, 10);
+    return {
+      isRtl: true, issues: unique,
+      warnings: unique.length > 0 ? [`${unique.length} CSS rule(s) use physical directional properties on RTL page — use logical properties`] : [],
+    };
+  });
+}
+
+// ── New flag-gated audit functions ─────────────────────────────────────────────
+
+async function runBodyTextContrast(page) {
+  function linearize(c) { const s = c / 255; return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4); }
+  function luminance(r, g, b) { return 0.2126 * linearize(r) + 0.7152 * linearize(g) + 0.0722 * linearize(b); }
+  function contrastRatio(l1, l2) { const [hi, lo] = l1 > l2 ? [l1, l2] : [l2, l1]; return parseFloat(((hi + 0.05) / (lo + 0.05)).toFixed(2)); }
+  function parseRGB(s) { const m = (s || '').match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/); return m ? [+m[1], +m[2], +m[3]] : null; }
+  const samples = await page.evaluate(() =>
+    [...document.querySelectorAll('p,li,td,th,h1,h2,h3,h4,h5,h6,label')].filter(el => {
+      const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && el.textContent.trim().length > 3;
+    }).slice(0, 120).map(el => {
+      const s = window.getComputedStyle(el);
+      return { fg: s.color, bg: s.backgroundColor, tag: el.tagName.toLowerCase(), text: el.textContent.trim().slice(0, 30), fontSize: parseFloat(s.fontSize), fontWeight: parseInt(s.fontWeight) };
+    })
+  );
+  const lowContrast = [];
+  for (const el of samples) {
+    const fg = parseRGB(el.fg), bg = parseRGB(el.bg);
+    if (!fg || !bg) continue;
+    const isLarge    = el.fontSize >= 18 || (el.fontWeight >= 700 && el.fontSize >= 14);
+    const required   = isLarge ? 3.0 : 4.5;
+    const ratio      = contrastRatio(luminance(...fg), luminance(...bg));
+    if (ratio < required) lowContrast.push({ tag: el.tag, text: el.text, contrast: ratio, required, fg: el.fg, bg: el.bg });
+  }
+  const unique = [...new Map(lowContrast.map(x => [x.fg + x.bg, x])).values()].slice(0, 20);
+  return { checked: samples.length, lowContrast: unique.length, details: unique, warnings: unique.length > 0 ? [`${unique.length} text element(s) below WCAG 1.4.3 contrast threshold`] : [] };
+}
+
+async function runPlaceholderContrast(page) {
+  function linearize(c) { const s = c / 255; return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4); }
+  function luminance(r, g, b) { return 0.2126 * linearize(r) + 0.7152 * linearize(g) + 0.0722 * linearize(b); }
+  function contrastRatio(l1, l2) { const [hi, lo] = l1 > l2 ? [l1, l2] : [l2, l1]; return parseFloat(((hi + 0.05) / (lo + 0.05)).toFixed(2)); }
+  function parseRGB(s) { const m = (s || '').match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/); return m ? [+m[1], +m[2], +m[3]] : null; }
+  const data = await page.evaluate(() => {
+    const phColors = [];
+    for (const sheet of document.styleSheets) {
+      try { for (const rule of sheet.cssRules) { if (rule instanceof CSSStyleRule && /::?-?placeholder/i.test(rule.selectorText || '')) { const c = rule.style.color; if (c) phColors.push(c); } } } catch {}
+    }
+    const inputs = [...document.querySelectorAll('input[placeholder],textarea[placeholder]')].filter(el => el.getBoundingClientRect().width > 0).slice(0, 20)
+      .map(el => ({ bg: window.getComputedStyle(el).backgroundColor, placeholder: (el.getAttribute('placeholder') || '').slice(0, 30), type: el.type || 'text' }));
+    return { phColors: phColors.slice(0, 3), inputs };
+  });
+  if (!data.phColors.length) return { checked: 0, lowContrast: 0, warnings: [] };
+  const phColor = data.phColors[0];
+  const lowContrast = data.inputs.reduce((acc, inp) => {
+    const fg = parseRGB(phColor), bg = parseRGB(inp.bg);
+    if (!fg || !bg) return acc;
+    const ratio = contrastRatio(luminance(...fg), luminance(...bg));
+    if (ratio < 4.5) acc.push({ type: inp.type, placeholder: inp.placeholder, contrast: ratio });
+    return acc;
+  }, []);
+  return { checked: data.inputs.length, lowContrast: lowContrast.length, details: lowContrast.slice(0, 10), warnings: lowContrast.length > 0 ? [`${lowContrast.length} input placeholder(s) with contrast < 4.5:1 (WCAG 1.4.3)`] : [] };
+}
+
+async function runNonTextContrast(page) {
+  function linearize(c) { const s = c / 255; return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4); }
+  function luminance(r, g, b) { return 0.2126 * linearize(r) + 0.7152 * linearize(g) + 0.0722 * linearize(b); }
+  function contrastRatio(l1, l2) { const [hi, lo] = l1 > l2 ? [l1, l2] : [l2, l1]; return parseFloat(((hi + 0.05) / (lo + 0.05)).toFixed(2)); }
+  function parseRGB(s) { const m = (s || '').match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/); return m ? [+m[1], +m[2], +m[3]] : null; }
+  const samples = await page.evaluate(() =>
+    [...document.querySelectorAll('input:not([type=hidden]),select,textarea')].filter(el => el.getBoundingClientRect().width > 0).slice(0, 30)
+      .map(el => {
+        const s  = window.getComputedStyle(el);
+        const ps = el.parentElement ? window.getComputedStyle(el.parentElement) : null;
+        return { border: s.borderTopColor || s.borderColor, parentBg: ps?.backgroundColor || 'rgb(255,255,255)', tag: el.tagName.toLowerCase(), type: el.type || el.tagName.toLowerCase() };
+      })
+  );
+  const lowContrast = samples.reduce((acc, el) => {
+    const fg = parseRGB(el.border), bg = parseRGB(el.parentBg);
+    if (!fg || !bg) return acc;
+    const ratio = contrastRatio(luminance(...fg), luminance(...bg));
+    if (ratio < 3.0) acc.push({ tag: el.tag, type: el.type, contrast: ratio, border: el.border });
+    return acc;
+  }, []);
+  const unique = [...new Map(lowContrast.map(x => [x.border + x.tag, x])).values()].slice(0, 10);
+  return { checked: samples.length, lowContrast: unique.length, details: unique, warnings: unique.length > 0 ? [`${unique.length} form input border(s) with contrast < 3:1 (WCAG 1.4.11)`] : [] };
+}
+
+async function runPWAReadiness(page) {
+  const hasManifest = await page.evaluate(() => !!document.querySelector('link[rel="manifest"]'));
+  const hasSW = await page.evaluate(async () => {
+    if (!navigator.serviceWorker) return false;
+    try { return (await navigator.serviceWorker.getRegistrations()).length > 0; } catch { return false; }
+  });
+  return {
+    hasManifest, hasServiceWorker: hasSW,
+    warnings: [
+      !hasManifest && 'No <link rel="manifest"> — PWA is not installable',
+      !hasSW       && 'No service worker registered — no offline support',
+    ].filter(Boolean),
+  };
+}
+
+async function runSRIAudit(page) {
+  return page.evaluate(() => {
+    const origin  = location.origin;
+    const missing = [];
+    for (const s of document.querySelectorAll('script[src]')) {
+      try { if (new URL(s.src).origin !== origin && !s.getAttribute('integrity')) missing.push({ type: 'script', src: s.src.slice(0, 80) }); } catch {}
+    }
+    for (const l of document.querySelectorAll('link[rel="stylesheet"][href]')) {
+      try { if (new URL(l.href).origin !== origin && !l.getAttribute('integrity')) missing.push({ type: 'stylesheet', src: l.href.slice(0, 80) }); } catch {}
+    }
+    return { missingSRI: missing.length, details: missing.slice(0, 10), warnings: missing.length > 0 ? [`${missing.length} external resource(s) missing integrity attribute — CDN compromise risk`] : [] };
+  });
+}
+
 // ── Route discovery helpers ───────────────────────────────────────────────────
 async function discoverByLinks(page, baseUrl) {
   const links = await page.$$eval('a[href]', (anchors, base) => {
@@ -1311,6 +1963,7 @@ async function runFullAudit(page, outPath, outBase, browser) {
     meta, images, scripts, touchTargets, headings, domA11y, layout, bundle, fonts,
     typography, interactiveStates, cursor, viewportUnits, mediaQuerySupport, formUX,
     animationDurations, stacking, svgA11y, mediaA11y, colorOnly, textSelectability,
+    landmarks, tableA11y, dialogs, widgets, security, statusMessages, domSize, preconnect, rtl,
   ] = await Promise.all([
     runMetaAudit(page),
     runImageAudit(page),
@@ -1333,6 +1986,15 @@ async function runFullAudit(page, outPath, outBase, browser) {
     runMediaAudit(page),
     runColorOnlyAudit(page),
     runTextSelectabilityAudit(page),
+    runLandmarkAudit(page),
+    runTableA11yAudit(page),
+    runDialogAudit(page),
+    runWidgetAudit(page),
+    runSecurityAudit(page),
+    runStatusMessageAudit(page),
+    runDomSizeAudit(page),
+    runPreconnectAudit(page),
+    runRtlAudit(page),
   ]);
 
   let darkMode_, darkModeA11y_;
@@ -1373,6 +2035,21 @@ async function runFullAudit(page, outPath, outBase, browser) {
   let emptyStatesResult;
   if (emptyStatesMode) emptyStatesResult = await runEmptyStatesAudit(page);
 
+  let bodyTextContrastResult;
+  if (textContrastMode) bodyTextContrastResult = await runBodyTextContrast(page);
+
+  let placeholderContrastResult;
+  if (placeholderContrastMode) placeholderContrastResult = await runPlaceholderContrast(page);
+
+  let nonTextContrastResult;
+  if (nonTextContrastMode) nonTextContrastResult = await runNonTextContrast(page);
+
+  let pwaResult;
+  if (pwaMode) pwaResult = await runPWAReadiness(page);
+
+  let sriResult;
+  if (sriMode) sriResult = await runSRIAudit(page);
+
   // text-spacing must run last (injects CSS that permanently alters the page)
   let textSpacing;
   if (textSpacingMode) textSpacing = await captureTextSpacing(page, outBase);
@@ -1381,18 +2058,24 @@ async function runFullAudit(page, outPath, outBase, browser) {
     meta, images, scripts, touchTargets, headings, domA11y, layout, bundle, fonts,
     typography, interactiveStates, cursor, viewportUnits, mediaQuerySupport, formUX,
     animationDurations, stacking, svgA11y, mediaA11y, colorOnly, textSelectability,
-    ...(darkMode_             && { darkMode: darkMode_ }),
-    ...(darkModeA11y_         && { darkModeA11y: darkModeA11y_ }),
-    ...(reducedMotion_        && { reducedMotion: reducedMotion_ }),
-    ...(forcedColors_         && { forcedColors: forcedColors_ }),
-    ...(print_                && { print: print_ }),
-    ...(linkCheck             && { linkCheck }),
-    ...(reflow                && { reflow }),
-    ...(paintComplexityResult && { paintComplexity: paintComplexityResult }),
-    ...(stateContrastResult   && { stateContrast: stateContrastResult }),
-    ...(requiredFieldsResult  && { requiredFields: requiredFieldsResult }),
-    ...(emptyStatesResult     && { emptyStates: emptyStatesResult }),
-    ...(textSpacing           && { textSpacing }),
+    landmarks, tableA11y, dialogs, widgets, security, statusMessages, domSize, preconnect, rtl,
+    ...(darkMode_                && { darkMode: darkMode_ }),
+    ...(darkModeA11y_            && { darkModeA11y: darkModeA11y_ }),
+    ...(reducedMotion_           && { reducedMotion: reducedMotion_ }),
+    ...(forcedColors_            && { forcedColors: forcedColors_ }),
+    ...(print_                   && { print: print_ }),
+    ...(linkCheck                && { linkCheck }),
+    ...(reflow                   && { reflow }),
+    ...(paintComplexityResult    && { paintComplexity: paintComplexityResult }),
+    ...(stateContrastResult      && { stateContrast: stateContrastResult }),
+    ...(requiredFieldsResult     && { requiredFields: requiredFieldsResult }),
+    ...(emptyStatesResult        && { emptyStates: emptyStatesResult }),
+    ...(bodyTextContrastResult   && { bodyTextContrast: bodyTextContrastResult }),
+    ...(placeholderContrastResult && { placeholderContrast: placeholderContrastResult }),
+    ...(nonTextContrastResult    && { nonTextContrast: nonTextContrastResult }),
+    ...(pwaResult                && { pwa: pwaResult }),
+    ...(sriResult                && { sri: sriResult }),
+    ...(textSpacing              && { textSpacing }),
   };
 }
 
