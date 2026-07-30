@@ -12,10 +12,19 @@ if [ ! -f "$PATTERNS" ]; then
   exit 0
 fi
 
-# Check committer identity (git config + env var overrides) against blocked patterns
-# GIT_AUTHOR_*/GIT_COMMITTER_* env vars take precedence over git config — check both
+# Check committer identity (git config + env var overrides) against blocked patterns.
+# GIT_AUTHOR_*/GIT_COMMITTER_* env vars take precedence over git config — resolve full chain.
 COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-${GIT_AUTHOR_EMAIL:-$(git config user.email 2>/dev/null)}}"
 COMMITTER_NAME="${GIT_COMMITTER_NAME:-${GIT_AUTHOR_NAME:-$(git config user.name 2>/dev/null)}}"
+
+# If identity is empty git falls back to OS username@hostname — block rather than let that through.
+if [ -z "$COMMITTER_EMAIL" ]; then
+  printf '\nCommit blocked: no git user.email configured.\n' >&2
+  printf '  Without an explicit identity git uses OS username@hostname, which may reveal personal info.\n' >&2
+  printf '  Fix: git config user.email "you@example.com"\n' >&2
+  exit 1
+fi
+
 if printf '%s\n%s' "$COMMITTER_EMAIL" "$COMMITTER_NAME" | grep -qIEf "$PATTERNS" 2>/dev/null; then
   printf '\nCommit blocked: committer identity matches a restricted pattern.\n' >&2
   printf '  Source: git config or GIT_AUTHOR_EMAIL / GIT_COMMITTER_EMAIL env vars.\n' >&2
@@ -47,3 +56,4 @@ if [ "$FOUND" -eq 1 ]; then
 fi
 
 exit 0
+
