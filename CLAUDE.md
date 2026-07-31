@@ -82,6 +82,7 @@ Also check these JSON fields from the desktop pw-e2e-test.js output (included au
 - `mediaA11y.missingCaptions[]` — `<video>` without a `<track kind="captions">` (WCAG 1.2.2); flag if > 0
 - `mediaA11y.audioAutoplayNoControls` — `<audio autoplay>` without `controls` — user cannot pause (WCAG 1.4.2); flag if > 0
 - `mediaA11y.audioMissingControls` — `<audio>` without `controls` attribute; flag if > 0
+- `mediaA11y.missingAudioDescription` — `<video>` without `<track kind="descriptions">` (WCAG 1.2.3/1.2.5); flag if > 0
 - `colorOnly.colorOnlyLinks[]` — inline links distinguished from body text only by color (WCAG 1.4.1); flag if > 0
 - `textSelectability.count` — text blocks with `user-select:none` that users can't copy; flag if > 0
 - `bundle.jsKB` / `bundle.cssKB` / `bundle.totalTransferKB` — resource sizes for jank diagnosis
@@ -132,6 +133,7 @@ Also check these JSON fields from the desktop pw-e2e-test.js output (included au
 - `domA11y.menuRoleMisuse` — `role="menu"` used for navigation instead of actions (WCAG 4.1.2); flag if > 0
 - `domA11y.detailsMissingSummary` — `<details>` without `<summary>` or with empty summary (WCAG 4.1.2); flag if > 0
 - `domA11y.meterProgressMissingLabel` — `<meter>`/`<progress>` without accessible name (WCAG 4.1.2); flag if > 0
+- `domA11y.draggableWithoutAlternative` — `[draggable="true"]` elements without keyboard/single-pointer alternative (WCAG 2.5.7 AA); flag if > 0
 - `widgets.comboboxIssues` — `[role="combobox"]` missing aria-expanded or aria-controls→listbox (WCAG 4.1.2); flag if > 0
 - `formUX.passwordAutocompleteOff` — password inputs with `autocomplete="off"` blocking password managers (WCAG 3.3.8); flag if > 0
 - `formUX.missingInputMode` — numeric/tel-like text inputs missing `inputmode` (wrong soft keyboard on mobile); flag if > 0

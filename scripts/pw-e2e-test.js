@@ -671,6 +671,16 @@ async function runDomA11yAudit(page) {
     const menuRoleMisuse = [...document.querySelectorAll('[role="menu"],[role="menubar"]')]
       .filter(el => !!el.closest('nav') || !!el.closest('[role="navigation"]') || !!el.querySelector('a[href]'))
       .slice(0, 5).map(el => ({ tag: el.tagName.toLowerCase(), class: (el.className || '').trim().split(/\s+/)[0] || null }));
+    // draggable elements without single-pointer alternative (WCAG 2.5.7 — WCAG 2.2 AA)
+    const draggableWithoutAlternative = [...document.querySelectorAll('[draggable="true"]')]
+      .filter(el => !el.matches('img, a[href]')) // img/a have native drag behavior + alternatives
+      .filter(el => {
+        const r = el.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) return false;
+        const parent = el.parentElement;
+        const hasButtonSibling = parent && [...parent.querySelectorAll('button,[role="button"],[tabindex="0"]')].length > 0;
+        return !hasButtonSibling;
+      }).slice(0, 5).map(el => ({ tag: el.tagName.toLowerCase(), id: el.id || null, class: (el.className || '').trim().split(/\s+/)[0] || null }));
     // <details> missing or empty <summary> (WCAG 4.1.2 — name, role, value)
     const detailsMissingSummary = [...document.querySelectorAll('details')]
       .filter(el => {
@@ -704,7 +714,8 @@ async function runDomA11yAudit(page) {
       menuRoleMisuse: menuRoleMisuse.length,
       detailsMissingSummary: detailsMissingSummary.length,
       meterProgressMissingLabel: meterProgressMissingLabel.length,
-      details: { duplicateIds, genericLinks, ariaHiddenInteractive, labelInNameViolations, iframesMissingTitle, positiveTabindex, ariaInvalidMissingMessage, rolePresentationFocusable, menuRoleMisuse, detailsMissingSummary, meterProgressMissingLabel },
+      draggableWithoutAlternative: draggableWithoutAlternative.length,
+      details: { duplicateIds, genericLinks, ariaHiddenInteractive, labelInNameViolations, iframesMissingTitle, positiveTabindex, ariaInvalidMissingMessage, rolePresentationFocusable, menuRoleMisuse, detailsMissingSummary, meterProgressMissingLabel, draggableWithoutAlternative },
       warnings: [
         brokenAriaRefs.length > 0               && `${brokenAriaRefs.length} broken ARIA reference(s)`,
         unlabeled.length > 0                    && `${unlabeled.length} form input(s) missing accessible label (WCAG 1.3.1)`,
@@ -721,8 +732,9 @@ async function runDomA11yAudit(page) {
         missingAriaCurrent                      && 'Active nav link missing aria-current="page" — screen readers get no location indicator (WCAG 2.4.8)',
         rolePresentationFocusable.length > 0    && `${rolePresentationFocusable.length} focusable element(s) with role="none/presentation" — strips semantics but remains keyboard-reachable (WCAG 4.1.2)`,
         menuRoleMisuse.length > 0               && `${menuRoleMisuse.length} element(s) use role="menu" for navigation — use role="navigation" instead (WCAG 4.1.2)`,
-        detailsMissingSummary.length > 0        && `${detailsMissingSummary.length} <details> element(s) missing or empty <summary> — screen readers announce "Details" with no context (WCAG 4.1.2)`,
-        meterProgressMissingLabel.length > 0    && `${meterProgressMissingLabel.length} <meter>/<progress> element(s) missing accessible name (WCAG 4.1.2)`,
+        detailsMissingSummary.length > 0            && `${detailsMissingSummary.length} <details> element(s) missing or empty <summary> — screen readers announce "Details" with no context (WCAG 4.1.2)`,
+        meterProgressMissingLabel.length > 0        && `${meterProgressMissingLabel.length} <meter>/<progress> element(s) missing accessible name (WCAG 4.1.2)`,
+        draggableWithoutAlternative.length > 0      && `${draggableWithoutAlternative.length} draggable element(s) without a keyboard/single-pointer alternative (WCAG 2.5.7 AA)`,
       ].filter(Boolean),
     };
   });
@@ -1255,6 +1267,11 @@ async function runMediaAudit(page) {
       .filter(v => v.getAttribute('aria-hidden') !== 'true')
       .filter(v => ![...v.querySelectorAll('track')].some(t => t.kind === 'captions' || t.kind === 'subtitles'))
       .map(v => ({ src: v.currentSrc || v.querySelector('source')?.src || '(no src)' }));
+    // Audio descriptions track (WCAG 1.2.3/1.2.5)
+    const missingAudioDescription = videos
+      .filter(v => v.getAttribute('aria-hidden') !== 'true')
+      .filter(v => ![...v.querySelectorAll('track')].some(t => t.kind === 'descriptions'))
+      .map(v => ({ src: v.currentSrc || v.querySelector('source')?.src || '(no src)' }));
     // Audio elements: autoplay without controls (WCAG 1.4.2), no controls at all
     const audios = [...document.querySelectorAll('audio')];
     const audioAutoplayNoControls = audios
@@ -1267,14 +1284,16 @@ async function runMediaAudit(page) {
       videoCount: videos.length,
       autoplayWithoutMuted: autoplayWithoutMuted.slice(0, 5),
       missingCaptions: missingCaptions.slice(0, 5),
+      missingAudioDescription: missingAudioDescription.slice(0, 5),
       audioCount: audios.length,
       audioAutoplayNoControls: audioAutoplayNoControls.length,
       audioMissingControls: audioMissingControls.length,
       warnings: [
-        autoplayWithoutMuted.length > 0    && `${autoplayWithoutMuted.length} video(s) autoplay without muted attribute — browser may block + WCAG 1.4.2`,
-        missingCaptions.length > 0         && `${missingCaptions.length} video(s) missing captions track (WCAG 1.2.2)`,
-        audioAutoplayNoControls.length > 0 && `${audioAutoplayNoControls.length} audio(s) autoplay without controls — user cannot pause (WCAG 1.4.2)`,
-        audioMissingControls.length > 0    && `${audioMissingControls.length} audio(s) without controls — users cannot control playback`,
+        autoplayWithoutMuted.length > 0       && `${autoplayWithoutMuted.length} video(s) autoplay without muted attribute — browser may block + WCAG 1.4.2`,
+        missingCaptions.length > 0            && `${missingCaptions.length} video(s) missing captions track (WCAG 1.2.2)`,
+        missingAudioDescription.length > 0    && `${missingAudioDescription.length} video(s) missing audio descriptions track (WCAG 1.2.3/1.2.5)`,
+        audioAutoplayNoControls.length > 0    && `${audioAutoplayNoControls.length} audio(s) autoplay without controls — user cannot pause (WCAG 1.4.2)`,
+        audioMissingControls.length > 0       && `${audioMissingControls.length} audio(s) without controls — users cannot control playback`,
       ].filter(Boolean),
     };
   });
