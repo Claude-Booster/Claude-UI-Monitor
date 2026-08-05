@@ -518,8 +518,10 @@ Assert "hook trigger uses pw-e2e-test.js (no MCP dependency)" `
 Assert "hook trigger includes Lighthouse step"  ($hookSrc -match 'lighthouse')
 Assert "hook trigger includes audit log step"   ($hookSrc -match 'ui-audit-log\.jsonl')
 
-# CLAUDE.md has updated protocol
-$claudeMd = Get-Content "$env:USERPROFILE\.claude\CLAUDE.md" -Raw -ErrorAction SilentlyContinue
+# CLAUDE.md has updated protocol — repo CLAUDE.md is the authoritative source
+$_repoCm = Join-Path $env:USERPROFILE 'Claude UI Monitor\CLAUDE.md'
+$claudeMd = if (Test-Path $_repoCm) { Get-Content $_repoCm -Raw -ErrorAction SilentlyContinue } `
+            else { Get-Content "$env:USERPROFILE\.claude\CLAUDE.md" -Raw -ErrorAction SilentlyContinue }
 Assert "CLAUDE.md references Lighthouse before/after" ($claudeMd -match 'Lighthouse BEFORE')
 Assert "CLAUDE.md references audit log"               ($claudeMd -match 'ui-audit-log\.jsonl')
 Assert "CLAUDE.md references project-registry.json"   ($claudeMd -match 'project-registry\.json')
@@ -543,7 +545,7 @@ Assert ".env has FIGMA_ACCESS_TOKEN placeholder" `
 Assert "figma MCP registered in .claude.json" `
        ((Get-Content "$env:USERPROFILE\.claude.json" -Raw) -match '"figma"')
 Assert "CLAUDE.md documents figma-baseline.js" `
-       ((Get-Content "$env:USERPROFILE\.claude\CLAUDE.md" -Raw) -match 'figma-baseline\.js')
+       ((Get-Content (Join-Path $env:USERPROFILE 'Claude UI Monitor\CLAUDE.md') -Raw -ErrorAction SilentlyContinue) -match 'figma-baseline\.js')
 Assert "ui-monitor.md (agent)"     (Test-Path "$env:USERPROFILE\.claude\agents\ui-monitor.md")
 Assert "global CLAUDE.md"          (Test-Path "$env:USERPROFILE\.claude\CLAUDE.md")
 Assert "framework-registry.json"   (Test-Path "$env:USERPROFILE\.claude\framework-registry.json")
@@ -1442,7 +1444,7 @@ if ((Test-Path $e2eScript) -and (Test-Path $nodeModPw)) {
 
     Assert "s25 clean: valid JSON"                    ($null -ne $j25)
     Assert "s25 clean: bfcache field present"         ($j25 -and $j25.PSObject.Properties['bfcache'])
-    Assert "s25 clean: bfcacheBlockers is number"     ($j25 -and ($j25.bfcache.bfcacheBlockers -is [int] -or $j25.bfcache.bfcacheBlockers -is [double]))
+    Assert "s25 clean: bfcacheBlockers is number"     ($j25 -and ($j25.bfcache.bfcacheBlockers -is [int] -or $j25.bfcache.bfcacheBlockers -is [double] -or $j25.bfcache.bfcacheBlockers -is [long]))
     Assert "s25 clean: bfcacheBlockers == 0"          ($j25 -and $j25.bfcache.bfcacheBlockers -eq 0)
 
     # Blocker page
