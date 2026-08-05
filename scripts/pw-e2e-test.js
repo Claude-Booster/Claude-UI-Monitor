@@ -489,6 +489,10 @@ async function runFontAudit(page) {
     const missingFontPreload = fontFaceUrls.filter(u => {
       try { const fname = new URL(u, location.href).pathname.split('/').pop(); return fname && !preloadFonts.has(fname); } catch { return false; }
     }).slice(0, 5);
+    const FONT_CDNS = ['fonts.googleapis.com', 'fonts.bunny.net', 'use.typekit.net', 'fonts.adobe.com', 'use.fontawesome.com', 'kit.fontawesome.com', 'rsms.me'];
+    const externalStylesheetFonts = [...document.querySelectorAll('link[rel="stylesheet"]')]
+      .map(l => { try { return new URL(l.href).hostname; } catch { return null; } })
+      .filter(h => h && FONT_CDNS.some(cdn => h === cdn || h.endsWith('.' + cdn)));
     return {
       loaded:   fontFaces.filter(f => f.status === 'loaded').length,
       failed:   fontFaces.filter(f => f.status === 'error').map(f => f.family),
@@ -496,9 +500,11 @@ async function runFontAudit(page) {
       foutRisk: fontFaceRules.filter(f => f.display === 'swap').map(f => f.family),
       optimal:  fontFaceRules.filter(f => f.display === 'optional' || f.display === 'fallback').map(f => f.family),
       missingFontPreload: missingFontPreload.length,
-      warnings: missingFontPreload.length > 0
-        ? [`${missingFontPreload.length} custom font(s) without <link rel="preload" as="font"> — causes late discovery and FOIT/FOUT`]
-        : [],
+      externalStylesheetFonts: externalStylesheetFonts.length,
+      warnings: [
+        missingFontPreload.length > 0 && `${missingFontPreload.length} custom font(s) without <link rel="preload" as="font"> — causes late discovery and FOIT/FOUT`,
+        externalStylesheetFonts.length > 0 && `${externalStylesheetFonts.length} CDN font stylesheet(s) detected (${[...new Set(externalStylesheetFonts)].join(', ')}) — preload hints not checked for CDN fonts`,
+      ].filter(Boolean),
     };
   });
 }
@@ -1178,7 +1184,13 @@ async function runAnimationDurationAudit(page) {
       if (!val || val === '0s') return 0;
       return Math.max(...val.split(',').map(p => { const v = parseFloat(p); return p.includes('ms') ? v : v * 1000; }));
     };
-    const longAnimations = [], longTransitions = [], infiniteAnimations = [];
+    const WCAG222_MS = 5000;
+    const parseIter = val => {
+      if (!val || val === 'infinite') return Infinity;
+      const n = parseFloat(val);
+      return isNaN(n) ? 1 : n;
+    };
+    const longAnimations = [], longTransitions = [], infiniteAnimations = [], wcag222Violations = [];
     for (const sheet of document.styleSheets) {
       try {
         for (const rule of sheet.cssRules) {
@@ -1194,19 +1206,28 @@ async function runAnimationDurationAudit(page) {
             if (isInfinite) {
               const animName = rule.style.getPropertyValue('animation-name') || (animShorthand || '').split(' ')[0];
               if (animName && animName !== 'none' && animName !== '') infiniteAnimations.push({ selector: sel, animationName: animName.slice(0, 40) });
+            } else if (ad) {
+              const durMs = parseDur(ad);
+              const iters = parseIter(iterCount);
+              const totalMs = durMs * iters;
+              if (totalMs > WCAG222_MS) {
+                const animName = rule.style.getPropertyValue('animation-name') || '';
+                wcag222Violations.push({ selector: sel, duration: ad.trim(), iterations: iterCount || '1', totalMs: Math.round(totalMs), animationName: animName.slice(0, 40) });
+              }
             }
           }
         }
       } catch {}
     }
     const unique = arr => [...new Map(arr.map(x => [x.selector, x])).values()].slice(0, 10);
-    const ua = unique(longAnimations), ut = unique(longTransitions), ui = unique(infiniteAnimations);
+    const ua = unique(longAnimations), ut = unique(longTransitions), ui = unique(infiniteAnimations), uw = unique(wcag222Violations);
     return {
-      longAnimations: ua, longTransitions: ut, infiniteAnimations: ui,
+      longAnimations: ua, longTransitions: ut, infiniteAnimations: ui, wcag222Violations: uw,
       warnings: [
         ua.length > 0 && `${ua.length} animation(s) > 1s — may feel sluggish`,
         ut.length > 0 && `${ut.length} transition(s) > 300ms — hover/focus response feels slow`,
         ui.length > 0 && `${ui.length} infinite animation(s) — should be pausable per WCAG 2.2.2`,
+        uw.length > 0 && `${uw.length} finite animation(s) with total duration > 5s — requires pause mechanism per WCAG 2.2.2`,
       ].filter(Boolean),
     };
   });
@@ -2078,6 +2099,23 @@ function routeSlug(route) {
   return route === '/' ? 'root' : route.replace(/^\//, '').replace(/[^a-zA-Z0-9]/g, '-').slice(0, 40);
 }
 
+async function runBfcacheAudit(page) {
+  return page.evaluate(() => {
+    const blockers = [];
+    if (typeof window.onunload === 'function') blockers.push('window.onunload handler');
+    if (typeof window.onbeforeunload === 'function') blockers.push('window.onbeforeunload handler');
+    const allEls = document.querySelectorAll('[onunload],[onbeforeunload]');
+    if (allEls.length > 0) blockers.push(`${allEls.length} inline unload handler(s) on elements`);
+    return {
+      bfcacheBlockers: blockers.length,
+      details: blockers,
+      warnings: blockers.length > 0
+        ? [`${blockers.length} bfcache blocker(s) — back/forward navigation forces full reload instead of instant restore`]
+        : [],
+    };
+  });
+}
+
 // ── Shared full-page audit ────────────────────────────────────────────────────
 async function runFullAudit(page, outPath, outBase, browser, imageFormats = {}) {
   const [
@@ -2085,6 +2123,7 @@ async function runFullAudit(page, outPath, outBase, browser, imageFormats = {}) 
     typography, interactiveStates, cursor, viewportUnits, mediaQuerySupport, formUX,
     animationDurations, stacking, svgA11y, mediaA11y, colorOnly, textSelectability,
     landmarks, tableA11y, dialogs, widgets, security, statusMessages, domSize, preconnect, rtl,
+    bfcacheResult,
   ] = await Promise.all([
     runMetaAudit(page),
     runImageAudit(page, imageFormats),
@@ -2116,6 +2155,7 @@ async function runFullAudit(page, outPath, outBase, browser, imageFormats = {}) 
     runDomSizeAudit(page),
     runPreconnectAudit(page),
     runRtlAudit(page),
+    runBfcacheAudit(page),
   ]);
 
   let darkMode_, darkModeA11y_;
@@ -2180,6 +2220,7 @@ async function runFullAudit(page, outPath, outBase, browser, imageFormats = {}) 
     typography, interactiveStates, cursor, viewportUnits, mediaQuerySupport, formUX,
     animationDurations, stacking, svgA11y, mediaA11y, colorOnly, textSelectability,
     landmarks, tableA11y, dialogs, widgets, security, statusMessages, domSize, preconnect, rtl,
+    bfcache: bfcacheResult,
     ...(darkMode_                && { darkMode: darkMode_ }),
     ...(darkModeA11y_            && { darkModeA11y: darkModeA11y_ }),
     ...(reducedMotion_           && { reducedMotion: reducedMotion_ }),

@@ -1178,6 +1178,8 @@ if ((Test-Path $e2eScript20) -and (Test-Path $nm20)) {
     .spinner       { animation: spin 1s linear infinite; }
     @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
     .fade          { animation-name: fade; animation-duration: 0.5s; }
+    .long-finite   { animation-name: slide; animation-duration: 3s; animation-iteration-count: 3; }
+    @keyframes slide { from { transform: translateX(0); } to { transform: translateX(20px); } }
     @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
     .link-nowrap a { text-decoration: none; color: blue; }
     .blocked       { pointer-events: none; }
@@ -1263,6 +1265,10 @@ if ((Test-Path $e2eScript20) -and (Test-Path $nm20)) {
     Assert "real URL s20: animationDurations.infiniteAnimations array" ($j20 -and $j20.animationDurations.PSObject.Properties['infiniteAnimations'])
     Assert "real URL s20: infiniteAnimations.Count >= 1"     ($j20 -and $j20.animationDurations.infiniteAnimations.Count -ge 1)
 
+    # animationDurations.wcag222Violations (finite animations with total duration > 5s)
+    Assert "real URL s20: animationDurations.wcag222Violations field present" ($j20 -and $j20.animationDurations.PSObject.Properties['wcag222Violations'])
+    Assert "real URL s20: wcag222Violations.Count >= 1 (.long-finite is 3s*3=9s)" ($j20 -and $j20.animationDurations.wcag222Violations.Count -ge 1)
+
     # cursor.pointerEventsNone
     Assert "real URL s20: cursor.pointerEventsNone is number" ($j20 -and $j20.cursor.PSObject.Properties['pointerEventsNone'])
     Assert "real URL s20: cursor.pointerEventsNone >= 1"      ($j20 -and $j20.cursor.pointerEventsNone -ge 1)
@@ -1298,6 +1304,157 @@ if ((Test-Path $e2eScript20) -and (Test-Path $nm20)) {
     }
 } else {
     Warn "E2E script or node_modules missing — skipping round-2 UX field tests (Section 20)"
+}
+
+# ── 21. Round-3 UX audit fields (landmarks, tableA11y, dialogs, widgets) ───────
+Write-Host "`n── 21. Round-3 UX audit fields (landmarks, tableA11y, dialogs) ──" -ForegroundColor Cyan
+
+$e2eScript21 = "$SCRIPTS\pw-e2e-test.js"
+$nm21        = "$SCRIPTS\node_modules"
+
+if ((Test-Path $e2eScript21) -and (Test-Path $nm21)) {
+    $src21 = Get-Content $e2eScript21 -Raw
+
+    # Source-level: always-on audit functions
+    Assert "pw-e2e-test: runLandmarkAudit defined"           ($src21 -match 'async function runLandmarkAudit')
+    Assert "pw-e2e-test: runTableA11yAudit defined"          ($src21 -match 'async function runTableA11yAudit')
+    Assert "pw-e2e-test: runDialogAudit defined"             ($src21 -match 'async function runDialogAudit')
+    Assert "pw-e2e-test: runWidgetAudit defined"             ($src21 -match 'async function runWidgetAudit')
+    Assert "pw-e2e-test: missingFontPreload in fonts"        ($src21 -match 'missingFontPreload')
+    Assert "pw-e2e-test: externalStylesheetFonts in runFontAudit" ($src21 -match 'externalStylesheetFonts')
+
+    # Live URL tests
+    $t21Port = 19992
+    $t21Dir  = "$env:TEMP\pw-s21"
+    if (-not (Test-Path $t21Dir)) { New-Item -ItemType Directory -Force $t21Dir | Out-Null }
+    @'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Section 21 Test Page</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap">
+</head>
+<body>
+  <nav><a href="/">Home</a></nav>
+  <main>
+    <h1>Section 21</h1>
+    <table>
+      <tr><td>Cell A</td><td>Cell B</td></tr>
+    </table>
+    <dialog open><p>A dialog without aria-modal</p></dialog>
+    <button aria-controls="panel1">Toggle</button>
+    <div id="panel1">Content</div>
+  </main>
+  <footer>Footer</footer>
+</body>
+</html>
+'@ | Set-Content "$t21Dir\index.html"
+
+    $t21Proc = Start-Process python -ArgumentList "-m", "http.server", $t21Port, "--bind", "127.0.0.1" -WorkingDirectory $t21Dir -PassThru -WindowStyle Hidden
+    Start-Sleep 2
+
+    $t21Url = "http://127.0.0.1:$t21Port/"
+
+    $ss21 = "$env:TEMP\s21-real.png"
+    $r21  = (node $e2eScript21 $t21Url $ss21 1280 800 2>$null) -join ''
+    try { $j21 = $r21 | ConvertFrom-Json } catch { $j21 = $null }
+
+    # landmarks
+    Assert "s21: landmarks field present"                      ($j21 -and $j21.PSObject.Properties['landmarks'])
+    Assert "s21: landmarks.hasMain is defined"                 ($j21 -and $j21.landmarks.PSObject.Properties['hasMain'])
+    Assert "s21: landmarks.hasNav is defined"                  ($j21 -and $j21.landmarks.PSObject.Properties['hasNav'])
+    Assert "s21: landmarks.warnings is array"                  ($j21 -and $j21.landmarks.PSObject.Properties['warnings'])
+
+    # tableA11y
+    Assert "s21: tableA11y field present"                      ($j21 -and $j21.PSObject.Properties['tableA11y'])
+    Assert "s21: tableA11y.issues is array"                    ($j21 -and $j21.tableA11y.PSObject.Properties['issues'])
+    Assert "s21: tableA11y.issues.Count >= 1 (table missing th)" ($j21 -and $j21.tableA11y.issues.Count -ge 1)
+
+    # dialogs
+    Assert "s21: dialogs field present"                        ($j21 -and $j21.PSObject.Properties['dialogs'])
+    Assert "s21: dialogs.issues is array"                      ($j21 -and $j21.dialogs.PSObject.Properties['issues'])
+
+    # widgets
+    Assert "s21: widgets field present"                        ($j21 -and $j21.PSObject.Properties['widgets'])
+    Assert "s21: widgets.toggleButtonsMissingExpanded >= 0"    ($j21 -and $j21.widgets.PSObject.Properties['toggleButtonsMissingExpanded'])
+
+        # fonts.externalStylesheetFonts — Google Fonts <link> in test HTML
+        Assert "s21: fonts.externalStylesheetFonts field present"  ($j21 -and $j21.fonts.PSObject.Properties['externalStylesheetFonts'])
+        Assert "s21: externalStylesheetFonts >= 1 (Google Fonts link in HTML)" ($j21 -and $j21.fonts.externalStylesheetFonts -ge 1)
+
+    if ($t21Proc) {
+        try { Stop-Process -Id $t21Proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+    }
+} else {
+    Warn "E2E script or node_modules missing — skipping round-3 UX field tests (Section 21)"
+}
+
+# ══════════════════════════════════════════════════════════════════
+# Section 25 — bfcache blockers
+# ══════════════════════════════════════════════════════════════════
+if ((Test-Path $e2eScript) -and (Test-Path $nodeModPw)) {
+
+    $src25 = Get-Content $e2eScript -Raw
+
+    # Source-level: function exists
+    Assert "pw-e2e-test: runBfcacheAudit defined"             ($src25 -match 'async function runBfcacheAudit')
+    Assert "pw-e2e-test: runBfcacheAudit in Promise.all"      ($src25 -match 'runBfcacheAudit\(page\)')
+    Assert "pw-e2e-test: bfcache in return object"            ($src25 -match 'bfcache\s*:')
+
+    # Live URL tests — clean page (no bfcache blockers)
+    $t25Port = 19989
+    $t25Dir  = "$env:TEMP\pw-s25"
+    if (-not (Test-Path $t25Dir)) { New-Item -ItemType Directory -Force $t25Dir | Out-Null }
+
+    # Clean page — no unload handlers
+    @'
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>bfcache clean</title></head>
+<body><h1>No bfcache blockers</h1></body>
+</html>
+'@ | Set-Content "$t25Dir\index.html"
+
+    # Blocker page — has window.onunload
+    @'
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>bfcache blocker</title></head>
+<body>
+<h1>Has bfcache blocker</h1>
+<script>window.onunload = function() {};</script>
+</body>
+</html>
+'@ | Set-Content "$t25Dir\blocker.html"
+
+    $t25Proc = Start-Process python -ArgumentList "-m", "http.server", $t25Port, "--bind", "127.0.0.1" -WorkingDirectory $t25Dir -PassThru -WindowStyle Hidden
+    Start-Sleep 2
+
+    $t25Url      = "http://127.0.0.1:$t25Port/"
+    $t25BlockUrl = "http://127.0.0.1:$t25Port/blocker.html"
+    $e2eScript25 = $e2eScript
+
+    # Clean page
+    $r25 = & node $e2eScript25 $t25Url "$t25Dir\out.png" 1280 800 2>&1 | Out-String
+    try { $j25 = $r25 | ConvertFrom-Json } catch { $j25 = $null }
+
+    Assert "s25 clean: valid JSON"                    ($null -ne $j25)
+    Assert "s25 clean: bfcache field present"         ($j25 -and $j25.PSObject.Properties['bfcache'])
+    Assert "s25 clean: bfcacheBlockers is number"     ($j25 -and ($j25.bfcache.bfcacheBlockers -is [int] -or $j25.bfcache.bfcacheBlockers -is [double]))
+    Assert "s25 clean: bfcacheBlockers == 0"          ($j25 -and $j25.bfcache.bfcacheBlockers -eq 0)
+
+    # Blocker page
+    $r25b = & node $e2eScript25 $t25BlockUrl "$t25Dir\out-b.png" 1280 800 2>&1 | Out-String
+    try { $j25b = $r25b | ConvertFrom-Json } catch { $j25b = $null }
+
+    Assert "s25 blocker: valid JSON"                  ($null -ne $j25b)
+    Assert "s25 blocker: bfcacheBlockers >= 1"        ($j25b -and $j25b.bfcache.bfcacheBlockers -ge 1)
+
+    if ($t25Proc) {
+        try { Stop-Process -Id $t25Proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+    }
 }
 
 # ── Summary ──────────────────────────────────────────────────────────────────

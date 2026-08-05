@@ -76,6 +76,7 @@ Also check these JSON fields from the desktop pw-e2e-test.js output (included au
 - `animationDurations.longTransitions[]` — transitions > 300ms (sluggish hover/focus); flag if > 0
 - `animationDurations.longAnimations[]` — animations > 1s (feels slow); flag if > 0
 - `animationDurations.infiniteAnimations[]` — infinite animations without pause mechanism (WCAG 2.2.2); flag if > 0
+- `animationDurations.wcag222Violations[]` — finite animations where `duration × iterations > 5s` — also require a pause/stop mechanism per WCAG 2.2.2; flag if > 0
 - `stacking.veryHighZIndex[]` — elements with z-index > 9999 (stacking anomalies); flag if > 0
 - `svgA11y.missingRole` / `.missingTitle` — informative SVGs missing `role="img"` or `<title>`; flag if > 0
 - `mediaA11y.autoplayWithoutMuted[]` — `<video autoplay>` without `muted` (WCAG 1.4.2); flag if > 0
@@ -99,6 +100,7 @@ Also check these JSON fields from the desktop pw-e2e-test.js output (included au
 - `domSize.totalNodes` — total DOM nodes; flag if > 1500 (Lighthouse threshold)
 - `preconnect.missingPreconnect` — third-party origins without preconnect/dns-prefetch hints; flag if > 0
 - `rtl.issues[]` — physical CSS directional properties on RTL pages (margin-left, float, text-align); flag if > 0
+- `bfcache.bfcacheBlockers` — `window.onunload`, `onbeforeunload`, or inline unload handlers blocking browser back/forward cache (forces full reload instead of instant restore); flag if > 0
 - `meta.metaDescription.missing` — page missing <meta name="description"> (SEO); flag if true
 - `meta.openGraphMissing[]` — missing og:title / og:description / og:image tags (social sharing); flag if not empty
 - `meta.noindex` — page is noindex (search engine excluded); flag if true
@@ -117,6 +119,7 @@ Also check these JSON fields from the desktop pw-e2e-test.js output (included au
 - `layout.focusObscureRisk` — sticky/fixed elements > 80px tall that may fully obscure focused elements (WCAG 2.4.11); flag if > 0
 - `layout.consecutiveBr` — consecutive <br><br> used for spacing instead of CSS margins; flag if > 0
 - `fonts.missingFontPreload` — @font-face custom fonts without matching <link rel="preload"> hint; flag if > 0
+- `fonts.externalStylesheetFonts` — `<link rel="stylesheet">` from known font CDNs (Google Fonts, Typekit, etc.); `missingFontPreload` cannot see these — flag if > 0 and no preload hints exist for the CDN stylesheets themselves
 - `cwv.inp` / `cwv.ratings.inp` — Interaction to Next Paint (new CWV replacing FID); flag if > 200ms
 - `scripts.firstPartyRenderBlocking` — first-party render-blocking scripts (defer/async missing); flag if > 0
 - `scripts.stylesheetInBody` — `<link rel="stylesheet">` inside `<body>` causing FOUC and blocking LCP; flag if > 0
