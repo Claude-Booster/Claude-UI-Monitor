@@ -183,8 +183,8 @@ OK "stylelint installed globally"
 # ── 14. Git pre-commit hook ────────────────────────────────────────────────────
 if (Test-Path (Join-Path $repoRoot '.git')) {
     git -C $repoRoot config core.hooksPath .githooks 2>&1 | Out-Null
-    git -C $repoRoot update-index --chmod=+x .githooks/pre-commit 2>&1 | Out-Null
-    OK "Pre-commit hook activated (core.hooksPath = .githooks)"
+    git -C $repoRoot update-index --chmod=+x .githooks/pre-commit .githooks/commit-msg .githooks/pre-push 2>&1 | Out-Null
+    OK "Hooks activated (pre-commit, commit-msg, pre-push)"
 
     $patternsFile = Join-Path $repoRoot '.githooks\blocked-patterns'
     $exampleFile  = Join-Path $repoRoot '.githooks\blocked-patterns.example'

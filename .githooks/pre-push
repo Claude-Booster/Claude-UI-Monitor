@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# pre-push: blocks annotated tags whose messages match .githooks/blocked-patterns.
+# git tag -a has no pre-tag hook; this catches leaks before they reach the remote.
+# Activate: git config core.hooksPath .githooks
+
+PATTERNS=".githooks/blocked-patterns"
+
+[ ! -f "$PATTERNS" ] && exit 0
+
+FOUND=0
+while IFS=' ' read -r local_ref local_sha remote_ref remote_sha; do
+  [ -z "$local_sha" ] && continue
+  [ "$local_sha" = "0000000000000000000000000000000000000000" ] && continue
+  obj_type=$(git cat-file -t "$local_sha" 2>/dev/null) || continue
+  if [ "$obj_type" = "tag" ]; then
+    if git cat-file -p "$local_sha" 2>/dev/null | grep -qIEf "$PATTERNS"; then
+      printf 'BLOCKED tag: %s\n' "$local_ref" >&2
+      FOUND=1
+    fi
+  fi
+done
+
+if [ "$FOUND" -eq 1 ]; then
+  printf '\nPush blocked: annotated tag message matches a restricted pattern in %s\n' "$PATTERNS" >&2
+  printf '  Delete and recreate the tag with a clean message.\n' >&2
+  exit 1
+fi
+
+exit 0

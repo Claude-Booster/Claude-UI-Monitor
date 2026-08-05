@@ -17,11 +17,20 @@ fi
 COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-${GIT_AUTHOR_EMAIL:-$(git config user.email 2>/dev/null)}}"
 COMMITTER_NAME="${GIT_COMMITTER_NAME:-${GIT_AUTHOR_NAME:-$(git config user.name 2>/dev/null)}}"
 
-# If identity is empty git falls back to OS username@hostname — block rather than let that through.
+# Resolve OS-level fallback identity (%USERNAME%/%USERDOMAIN%/hostname).
+# git uses these when user.email is unset — check them explicitly so the error message
+# tells you exactly which OS value would leak.
+OS_USER="${USERNAME:-${USER:-}}"
+OS_DOMAIN="${USERDOMAIN:-$(hostname 2>/dev/null)}"
+
+# If identity is empty git falls back to OS username@hostname — block and report the OS value.
 if [ -z "$COMMITTER_EMAIL" ]; then
   printf '\nCommit blocked: no git user.email configured.\n' >&2
-  printf '  Without an explicit identity git uses OS username@hostname, which may reveal personal info.\n' >&2
-  printf '  Fix: git config user.email "you@example.com"\n' >&2
+  printf '  Without an explicit identity git uses OS username@hostname (%s@%s), which may reveal personal info.\n' "$OS_USER" "$OS_DOMAIN" >&2
+  if printf '%s\n%s' "$OS_USER" "$OS_DOMAIN" | grep -qIEf "$PATTERNS" 2>/dev/null; then
+    printf '  OS identity matches a restricted pattern — would leak if used.\n' >&2
+  fi
+  printf '  Fix: git config user.email "you@example.com"  (use a non-work address)\n' >&2
   exit 1
 fi
 

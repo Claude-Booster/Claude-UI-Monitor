@@ -560,6 +560,8 @@ Assert "selenium-webdriver installed" (Test-Path "$SCRIPTS\node_modules\selenium
 $repoRoot2 = Join-Path $env:USERPROFILE 'Claude UI Monitor'
 if (Test-Path $repoRoot2) {
     Assert "Repo .githooks/pre-commit exists"               (Test-Path "$repoRoot2\.githooks\pre-commit")
+    Assert "Repo .githooks/commit-msg exists"               (Test-Path "$repoRoot2\.githooks\commit-msg")
+    Assert "Repo .githooks/pre-push exists"                 (Test-Path "$repoRoot2\.githooks\pre-push")
     Assert "Repo .githooks/blocked-patterns.example exists" (Test-Path "$repoRoot2\.githooks\blocked-patterns.example")
     Assert "Repo .gitignore excludes blocked-patterns"      ((Get-Content "$repoRoot2\.gitignore" -Raw -EA SilentlyContinue) -match 'blocked-patterns')
 } else {
