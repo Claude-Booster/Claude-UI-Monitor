@@ -4,7 +4,7 @@
 
 <br/>
 
-[![Platform](https://img.shields.io/badge/platform-Windows-0078D4?logo=windows&logoColor=white)](https://github.com/claude-ui-monitor/claude-ui-monitor)
+[![Platform](https://img.shields.io/badge/platform-Windows-0078D4?logo=windows&logoColor=white)](https://github.com/Claude-Booster/Claude-UI-Monitor)
 [![Node](https://img.shields.io/badge/node-%3E%3D18-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-required-7C3AED?logo=anthropic&logoColor=white)](https://claude.ai/code)
 [![License](https://img.shields.io/badge/license-MIT-22C55E)](LICENSE)
@@ -157,7 +157,7 @@ Every screenshot run (hook or manual) includes these zero-overhead audits:
 ## Install
 
 ```powershell
-git clone https://github.com/claude-ui-monitor/claude-ui-monitor.git
+git clone https://github.com/Claude-Booster/Claude-UI-Monitor.git
 cd claude-ui-monitor
 pwsh -File install.ps1
 ```
