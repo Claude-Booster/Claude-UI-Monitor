@@ -519,7 +519,7 @@ Assert "hook trigger includes Lighthouse step"  ($hookSrc -match 'lighthouse')
 Assert "hook trigger includes audit log step"   ($hookSrc -match 'ui-audit-log\.jsonl')
 
 # CLAUDE.md has updated protocol — repo CLAUDE.md is the authoritative source
-$_repoCm = Join-Path $env:USERPROFILE 'Claude UI Monitor\CLAUDE.md'
+$_repoCm = Join-Path (Split-Path $SCRIPTS -Parent) 'CLAUDE.md'
 $claudeMd = if (Test-Path $_repoCm) { Get-Content $_repoCm -Raw -ErrorAction SilentlyContinue } `
             else { Get-Content "$env:USERPROFILE\.claude\CLAUDE.md" -Raw -ErrorAction SilentlyContinue }
 Assert "CLAUDE.md references Lighthouse before/after" ($claudeMd -match 'Lighthouse BEFORE')
@@ -545,7 +545,7 @@ Assert ".env has FIGMA_ACCESS_TOKEN placeholder" `
 Assert "figma MCP registered in .claude.json" `
        ((Get-Content "$env:USERPROFILE\.claude.json" -Raw) -match '"figma"')
 Assert "CLAUDE.md documents figma-baseline.js" `
-       ((Get-Content (Join-Path $env:USERPROFILE 'Claude UI Monitor\CLAUDE.md') -Raw -ErrorAction SilentlyContinue) -match 'figma-baseline\.js')
+       ((Get-Content (Join-Path (Split-Path $SCRIPTS -Parent) 'CLAUDE.md') -Raw -ErrorAction SilentlyContinue) -match 'figma-baseline\.js')
 Assert "ui-monitor.md (agent)"     (Test-Path "$env:USERPROFILE\.claude\agents\ui-monitor.md")
 Assert "global CLAUDE.md"          (Test-Path "$env:USERPROFILE\.claude\CLAUDE.md")
 Assert "framework-registry.json"   (Test-Path "$env:USERPROFILE\.claude\framework-registry.json")
@@ -557,7 +557,7 @@ Assert "selenium-xbrowser.js"     (Test-Path "$SCRIPTS\selenium-xbrowser.js")
 Assert "selenium-webdriver installed" (Test-Path "$SCRIPTS\node_modules\selenium-webdriver")
 
 # Pre-commit hook files in distribution repo
-$repoRoot2 = Join-Path $env:USERPROFILE 'Claude UI Monitor'
+$repoRoot2 = Split-Path $SCRIPTS -Parent
 if (Test-Path $repoRoot2) {
     Assert "Repo .githooks/pre-commit exists"               (Test-Path "$repoRoot2\.githooks\pre-commit")
     Assert "Repo .githooks/commit-msg exists"               (Test-Path "$repoRoot2\.githooks\commit-msg")
