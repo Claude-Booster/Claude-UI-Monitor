@@ -173,6 +173,8 @@ if ((Test-Path $e2eScript) -and (Test-Path $nodeModPw)) {
     }
 
     # Mobile viewport (390x844 — iPhone 14)
+    # Kill any lingering Chrome from the desktop call before starting a new one.
+    Stop-Process -Name "chrome-headless-shell" -Force -ErrorAction SilentlyContinue
     $mobileOut = "$env:USERPROFILE\.claude\ui-screenshots\e2e-mobile-test.png"
     $mRes = Invoke-NodeTimeout @($e2eScript, 'about:blank', $mobileOut, '390', '844') -TimeoutMs 300000
     try { $mp = $mRes | ConvertFrom-Json -ErrorAction Stop } catch { $mp = $null }
@@ -180,6 +182,8 @@ if ((Test-Path $e2eScript) -and (Test-Path $nodeModPw)) {
     Assert "Mobile screenshot reports correct width (390)"   ($mp -and $mp.width -eq 390) "(got: $($mp.width))"
 
     # Tablet viewport (768x1024 — iPad)
+    # Kill any lingering Chrome from the mobile call before starting a new one.
+    Stop-Process -Name "chrome-headless-shell" -Force -ErrorAction SilentlyContinue
     $tabletOut = "$env:USERPROFILE\.claude\ui-screenshots\e2e-tablet-test.png"
     $tRes = Invoke-NodeTimeout @($e2eScript, 'about:blank', $tabletOut, '768', '1024') -TimeoutMs 300000
     try { $tp = $tRes | ConvertFrom-Json -ErrorAction Stop } catch { $tp = $null }
@@ -693,8 +697,8 @@ if ((Test-Path $e2eScript) -and (Test-Path $nodeModPw)) {
     Assert "about:blank: fonts absent (real-URL-only)"           ($t17bJson -and -not $t17bJson.PSObject.Properties['fonts'])
 
     # 17c. --compare: first run creates baseline (about:blank)
-    $t17Base = "$env:USERPROFILE\.claude\ui-screenshots\test17-baseline.png"
-    if (Test-Path $t17Base) { Remove-Item $t17Base -Force }
+    # Use a guaranteed-unique temp path so the file can never pre-exist.
+    $t17Base = [IO.Path]::Combine([IO.Path]::GetTempPath(), "test17-baseline-$([System.Guid]::NewGuid().ToString('N')).png")
     $t17eOut = "$env:USERPROFILE\.claude\ui-screenshots\test17-cmp1.png"
     $t17eRaw = Invoke-NodeTimeout @($e2eScript, 'about:blank', $t17eOut, '1280', '800', "--compare=$t17Base") -TimeoutMs 300000
     try { $t17eJson = $t17eRaw | ConvertFrom-Json -ErrorAction Stop } catch { $t17eJson = $null }
@@ -711,20 +715,36 @@ if ((Test-Path $e2eScript) -and (Test-Path $nodeModPw)) {
 
     # 17e. Dark mode, CWV, and real-URL always-on fields — use local HTTP server
     $t17Port = 19994
-    $t17Job  = $null
+    $t17Proc = $null
     $t17Up   = $false
+    $t17Dir  = [IO.Path]::Combine([IO.Path]::GetTempPath(), "pw-s17-$([System.Guid]::NewGuid().ToString('N')[0..7] -join '')")
     try {
-        $t17Job = Start-Job { param($p); python -m http.server $p 2>$null } -ArgumentList $t17Port
-        for ($i = 0; $i -lt 8; $i++) {
+        New-Item -ItemType Directory -Force $t17Dir | Out-Null
+        @'
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="S17 test page">
+<title>S17 Test</title></head>
+<body><h1>S17 Real URL Test</h1><p>Playwright UI Monitor test page.</p></body>
+</html>
+'@ | Set-Content "$t17Dir\index.html" -Encoding UTF8
+        $t17Proc = Start-Process python -ArgumentList "-m", "http.server", $t17Port, "--bind", "127.0.0.1" `
+                       -WorkingDirectory $t17Dir -PassThru -WindowStyle Hidden
+        for ($i = 0; $i -lt 16; $i++) {
             Start-Sleep -Milliseconds 500
-            if (Test-NetConnection -ComputerName localhost -Port $t17Port -InformationLevel Quiet -EA SilentlyContinue) {
-                $t17Up = $true; break
-            }
+            $tcp = [Net.Sockets.TcpClient]::new()
+            $ar = $tcp.BeginConnect('127.0.0.1', $t17Port, $null, $null)
+            $ok = $ar.AsyncWaitHandle.WaitOne(300)
+            try { $tcp.Close() } catch {}
+            if ($ok) { $t17Up = $true; break }
         }
     } catch {}
 
     if ($t17Up) {
-        $t17Url = "http://localhost:$t17Port"
+        $t17Url = "http://127.0.0.1:$t17Port"
+        # Kill any lingering Chrome before each real-URL call to avoid AV scan accumulation.
+        Stop-Process -Name "chrome-headless-shell" -Force -ErrorAction SilentlyContinue
 
         # Always-on fields on real URL
         $t17rOut = "$env:USERPROFILE\.claude\ui-screenshots\test17-real.png"
@@ -754,16 +774,12 @@ if ((Test-Path $e2eScript) -and (Test-Path $nodeModPw)) {
         Assert "--cwv: cwv.ratings object present"               ($t17cwvJson -and $null -ne $t17cwvJson.cwv.ratings)           "(got: $($t17cwvJson.cwv))"
         Assert "--cwv: cwv.cls is defined (0 or more)"          ($t17cwvJson -and $null -ne $t17cwvJson.cwv.cls)                "(got: $($t17cwvJson.cwv.cls))"
 
-        if ($t17Job) {
-            Stop-Job $t17Job -ErrorAction SilentlyContinue
-            Remove-Job $t17Job -Force -ErrorAction SilentlyContinue
-        }
+        if ($t17Proc) { try { Stop-Process -Id $t17Proc.Id -Force -ErrorAction SilentlyContinue } catch {} }
+        Remove-Item $t17Dir -Recurse -Force -ErrorAction SilentlyContinue
     } else {
         Warn "Local HTTP server on port $t17Port unavailable — skipping dark-mode, cwv, and real-URL tests"
-        if ($t17Job) {
-            Stop-Job $t17Job -ErrorAction SilentlyContinue
-            Remove-Job $t17Job -Force -ErrorAction SilentlyContinue
-        }
+        if ($t17Proc) { try { Stop-Process -Id $t17Proc.Id -Force -ErrorAction SilentlyContinue } catch {} }
+        Remove-Item $t17Dir -Recurse -Force -ErrorAction SilentlyContinue
     }
 } else {
     Warn "E2E script or node_modules missing — skipping extended feature tests (Section 17)"
