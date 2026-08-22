@@ -8,3 +8,6 @@ scripts/baselines/
 ui-audit-log.jsonl
 .env
 design-tokens.json
+project-registry.json
+ui-screenshots/
+scripts/scripts/
