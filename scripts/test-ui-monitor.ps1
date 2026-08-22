@@ -24,6 +24,22 @@ function Invoke-Hook($filePath, $tool = "Edit") {
     $out  = $json | pwsh -NonInteractive -File $hook 2>$null
     return @{ ExitCode = $LASTEXITCODE; Output = $out }
 }
+function Invoke-NodeTimeout {
+    # Runs: node <NodeArgs> with a hard timeout. Returns stdout or '{}' on timeout/error.
+    param([string[]]$NodeArgs, [int]$TimeoutMs = 45000)
+    $tmp = [IO.Path]::GetTempFileName()
+    $err = [IO.Path]::GetTempFileName()
+    $proc = Start-Process -FilePath node -ArgumentList $NodeArgs `
+                          -NoNewWindow -RedirectStandardOutput $tmp -RedirectStandardError $err -PassThru
+    if (-not $proc.WaitForExit($TimeoutMs)) {
+        try { $proc.Kill() } catch {}
+        Remove-Item $tmp, $err -ErrorAction SilentlyContinue
+        return '{}'
+    }
+    $result = (Get-Content $tmp -Raw -ErrorAction SilentlyContinue) ?? '{}'
+    Remove-Item $tmp, $err -ErrorAction SilentlyContinue
+    return $result
+}
 
 # ── 1. Hook filtering ────────────────────────────────────────────────────────
 Write-Host "`n── 1. Hook filtering: non-UI files must be silent ────────────" -ForegroundColor Cyan
@@ -1079,7 +1095,7 @@ if ((Test-Path $e2eScript19) -and (Test-Path $nm19)) {
 
     # --link-check
     $ss19Lc = "$env:TEMP\s19-lc.png"
-    $r19Lc  = (node $e2eScript19 $t19Url $ss19Lc 1280 800 --link-check 2>$null) -join ''
+    $r19Lc  = Invoke-NodeTimeout @($e2eScript19, $t19Url, $ss19Lc, 1280, 800, '--link-check')
     try { $j19Lc = $r19Lc | ConvertFrom-Json } catch { $j19Lc = $null }
     Assert "--link-check: linkCheck field present"     ($j19Lc -and $j19Lc.PSObject.Properties['linkCheck'])
     Assert "--link-check: linkCheck.checked >= 0"      ($j19Lc -and $j19Lc.linkCheck.PSObject.Properties['checked'])
@@ -1088,7 +1104,7 @@ if ((Test-Path $e2eScript19) -and (Test-Path $nm19)) {
 
     # --reflow
     $ss19Rf = "$env:TEMP\s19-rf.png"
-    $r19Rf  = (node $e2eScript19 $t19Url $ss19Rf 1280 800 --reflow 2>$null) -join ''
+    $r19Rf  = Invoke-NodeTimeout @($e2eScript19, $t19Url, $ss19Rf, 1280, 800, '--reflow')
     try { $j19Rf = $r19Rf | ConvertFrom-Json } catch { $j19Rf = $null }
     Assert "--reflow: reflow field present"                     ($j19Rf -and $j19Rf.PSObject.Properties['reflow'])
     Assert "--reflow: reflow.hasHorizontalScrollAt320px bool"   ($j19Rf -and $j19Rf.reflow.PSObject.Properties['hasHorizontalScrollAt320px'])
@@ -1098,7 +1114,7 @@ if ((Test-Path $e2eScript19) -and (Test-Path $nm19)) {
 
     # --text-spacing
     $ss19Ts = "$env:TEMP\s19-ts.png"
-    $r19Ts  = (node $e2eScript19 $t19Url $ss19Ts 1280 800 --text-spacing 2>$null) -join ''
+    $r19Ts  = Invoke-NodeTimeout @($e2eScript19, $t19Url, $ss19Ts, 1280, 800, '--text-spacing')
     try { $j19Ts = $r19Ts | ConvertFrom-Json } catch { $j19Ts = $null }
     Assert "--text-spacing: textSpacing field present"          ($j19Ts -and $j19Ts.PSObject.Properties['textSpacing'])
     Assert "--text-spacing: textSpacing.clippedElements array"  ($j19Ts -and $j19Ts.textSpacing.PSObject.Properties['clippedElements'])
@@ -1107,7 +1123,7 @@ if ((Test-Path $e2eScript19) -and (Test-Path $nm19)) {
 
     # --paint-complexity
     $ss19Pc = "$env:TEMP\s19-pc.png"
-    $r19Pc  = (node $e2eScript19 $t19Url $ss19Pc 1280 800 --paint-complexity 2>$null) -join ''
+    $r19Pc  = Invoke-NodeTimeout @($e2eScript19, $t19Url, $ss19Pc, 1280, 800, '--paint-complexity')
     try { $j19Pc = $r19Pc | ConvertFrom-Json } catch { $j19Pc = $null }
     Assert "--paint-complexity: paintComplexity field present"           ($j19Pc -and $j19Pc.PSObject.Properties['paintComplexity'])
     Assert "--paint-complexity: expensiveProperties is array"            ($j19Pc -and $j19Pc.paintComplexity.PSObject.Properties['expensiveProperties'])
@@ -1115,7 +1131,7 @@ if ((Test-Path $e2eScript19) -and (Test-Path $nm19)) {
 
     # --state-contrast
     $ss19Sc = "$env:TEMP\s19-sc.png"
-    $r19Sc  = (node $e2eScript19 $t19Url $ss19Sc 1280 800 --state-contrast 2>$null) -join ''
+    $r19Sc  = Invoke-NodeTimeout @($e2eScript19, $t19Url, $ss19Sc, 1280, 800, '--state-contrast')
     try { $j19Sc = $r19Sc | ConvertFrom-Json } catch { $j19Sc = $null }
     Assert "--state-contrast: stateContrast field present"               ($j19Sc -and $j19Sc.PSObject.Properties['stateContrast'])
     Assert "--state-contrast: stateContrast.checked >= 0"                ($j19Sc -and $j19Sc.stateContrast.PSObject.Properties['checked'])
