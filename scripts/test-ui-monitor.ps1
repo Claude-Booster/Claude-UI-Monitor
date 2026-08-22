@@ -759,14 +759,16 @@ if ((Test-Path $e2eScript) -and (Test-Path $nodeModPw)) {
         Assert "real URL: fonts field present"                   ($t17rJson -and $t17rJson.PSObject.Properties['fonts'])
         Assert "real URL: fonts.loaded is a number"              ($t17rJson -and $null -ne $t17rJson.fonts.loaded)               "(got: $($t17rJson.fonts.loaded))"
 
-        # Dark mode
+        # Dark mode — kill stale Chrome first to avoid memory accumulation
+        Stop-Process -Name "chrome-headless-shell" -Force -ErrorAction SilentlyContinue
         $t17dkOut = "$env:USERPROFILE\.claude\ui-screenshots\test17-dark.png"
         $t17dkRaw = Invoke-NodeTimeout @($e2eScript, $t17Url, $t17dkOut, '1280', '800', '--dark-mode')
         try { $t17dkJson = $t17dkRaw | ConvertFrom-Json -ErrorAction Stop } catch { $t17dkJson = $null }
         Assert "--dark-mode: JSON has 'darkMode' field"          ($t17dkJson -and $t17dkJson.PSObject.Properties['darkMode'])    "(got: $t17dkRaw)"
         Assert "--dark-mode: -dark.png file created on disk"     ($t17dkJson -and (Test-Path ($t17dkJson.darkMode.out ?? 'NONE'))) "(path: $($t17dkJson.darkMode.out))"
 
-        # CWV
+        # CWV — kill stale Chrome first
+        Stop-Process -Name "chrome-headless-shell" -Force -ErrorAction SilentlyContinue
         $t17cwvOut = "$env:USERPROFILE\.claude\ui-screenshots\test17-cwv.png"
         $t17cwvRaw = Invoke-NodeTimeout @($e2eScript, $t17Url, $t17cwvOut, '1280', '800', '--cwv')
         try { $t17cwvJson = $t17cwvRaw | ConvertFrom-Json -ErrorAction Stop } catch { $t17cwvJson = $null }
