@@ -80,6 +80,13 @@ const { AxeBuilder } = require('@axe-core/playwright');
 const path           = require('path');
 const fs             = require('fs');
 
+const BROWSER_ARGS = [
+  '--no-sandbox', '--disable-setuid-sandbox', '--no-first-run',
+  '--disable-default-apps', '--disable-extensions', '--disable-sync',
+  '--disable-background-networking', '--disable-client-side-phishing-detection',
+  '--safebrowsing-disable-auto-update', '--metrics-recording-only',
+];
+
 // ── Argument parsing ──────────────────────────────────────────────────────────
 const positional = process.argv.slice(2).filter(a => !a.startsWith('--'));
 const flags      = Object.fromEntries(
@@ -128,6 +135,8 @@ const placeholderContrastMode= flags['placeholder-contrast']   === 'true';
 const nonTextContrastMode    = flags['non-text-contrast']      === 'true';
 const pwaMode                = flags['pwa']                    === 'true';
 const sriMode                = flags['sri']                    === 'true';
+const cdpUrl                 = flags['cdp-url']               || null;
+const startBrowserServer     = flags['start-browser-server']  === 'true';
 
 // ── Response tracking (image formats only) ────────────────────────────────────
 function setupResponseTracking(page) {
@@ -250,7 +259,7 @@ async function captureScrollStates(page, outBase) {
 
 async function recordVideo(pageUrl, outBase, w, h) {
   const videoDir = path.dirname(outBase) || '.';
-  const browser  = await chromium.launch({ headless: true });
+  const browser  = await chromium.launch({ headless: true, args: BROWSER_ARGS });
   const context  = await browser.newContext({ viewport: { width: w, height: h }, recordVideo: { dir: videoDir, size: { width: w, height: h } } });
   const page     = await context.newPage();
   try { await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 }); await page.waitForTimeout(3000); } catch {}
@@ -2247,7 +2256,10 @@ async function singlePage() {
   const outDir  = path.dirname(outBase);
   if (outDir && outDir !== '.' && !fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
-  const browser = await chromium.launch({ headless: true });
+  const ownBrowser = !cdpUrl;
+  const browser = cdpUrl
+    ? await chromium.connectOverCDP(cdpUrl)   // cdpUrl = http://localhost:PORT
+    : await chromium.launch({ headless: true, args: BROWSER_ARGS });
   const context = await browser.newContext();
   const page    = await context.newPage();
 
@@ -2294,7 +2306,7 @@ async function singlePage() {
   if (focusAudit && url !== 'about:blank') focusAuditResult = await runFocusAuditFn(page, outBase);
 
   await context.close();
-  await browser.close();
+  if (ownBrowser) await browser.close();
 
   const result = { ok: true, url, out: outArg, width, height, consoleErrors: errors, a11y };
   Object.assign(result, auditResult);
@@ -2346,7 +2358,10 @@ async function multiPage() {
   const outDir = path.dirname(prefix);
   if (outDir && !fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
-  const browser       = await chromium.launch({ headless: true });
+  const ownBrowser = !cdpUrl;
+  const browser       = cdpUrl
+    ? await chromium.connectOverCDP(cdpUrl)
+    : await chromium.launch({ headless: true, args: BROWSER_ARGS });
   const sharedContext = await browser.newContext();
   const results       = [];
 
@@ -2409,13 +2424,35 @@ async function multiPage() {
   }
 
   await sharedContext.close();
-  await browser.close();
+  if (ownBrowser) await browser.close();
 
   process.stdout.write(JSON.stringify(results) + '\n');
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
-(multiMode ? multiPage() : singlePage()).catch(e => {
-  process.stdout.write(JSON.stringify({ ok: false, error: e.message }) + '\n');
-  process.exit(1);
-});
+if (startBrowserServer) {
+  // Launch browser once, warm up (first newPage is slow), print CDP URL, keep alive.
+  // Used by test suites to share one browser across many pw-e2e-test.js calls.
+  // Workers connect via --cdp-url=http://localhost:PORT and skip the slow cold start.
+  const cdpPort = parseInt(flags['port'] || '19987', 10);
+  chromium.launch({ headless: true, args: [...BROWSER_ARGS, `--remote-debugging-port=${cdpPort}`] }).then(async browser => {
+    // Warm up: first newPage always takes 30+ s; close it so workers get fast (~7s) pages
+    const wCtx  = await browser.newContext();
+    const wPage = await wCtx.newPage();
+    await wPage.close();
+    await wCtx.close();
+    // Signal ready — workers can now connect
+    process.stdout.write(`http://localhost:${cdpPort}\n`);
+    const cleanup = () => browser.close().finally(() => process.exit(0));
+    process.on('SIGTERM', cleanup);
+    process.on('SIGINT',  cleanup);
+  }).catch(e => {
+    process.stdout.write(JSON.stringify({ ok: false, error: e.message }) + '\n');
+    process.exit(1);
+  });
+} else {
+  (multiMode ? multiPage() : singlePage()).catch(e => {
+    process.stdout.write(JSON.stringify({ ok: false, error: e.message }) + '\n');
+    process.exit(1);
+  });
+}

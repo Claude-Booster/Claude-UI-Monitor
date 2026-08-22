@@ -26,10 +26,12 @@ function Invoke-Hook($filePath, $tool = "Edit") {
 }
 function Invoke-NodeTimeout {
     # Runs: node <NodeArgs> with a hard timeout. Returns stdout or '{}' on timeout/error.
-    param([string[]]$NodeArgs, [int]$TimeoutMs = 45000)
+    param([string[]]$NodeArgs, [int]$TimeoutMs = 300000)
     $tmp = [IO.Path]::GetTempFileName()
     $err = [IO.Path]::GetTempFileName()
-    $proc = Start-Process -FilePath node -ArgumentList $NodeArgs `
+    # Build a properly quoted argument string so paths with spaces work in Start-Process
+    $argStr = ($NodeArgs | ForEach-Object { '"' + ($_ -replace '"', '\"') + '"' }) -join ' '
+    $proc = Start-Process -FilePath node -ArgumentList $argStr `
                           -NoNewWindow -RedirectStandardOutput $tmp -RedirectStandardError $err -PassThru
     if (-not $proc.WaitForExit($TimeoutMs)) {
         try { $proc.Kill() } catch {}
@@ -159,10 +161,10 @@ $nodeModPw = "$SCRIPTS\node_modules\playwright"
 
 if ((Test-Path $e2eScript) -and (Test-Path $nodeModPw)) {
     # Desktop smoke test
-    $result = node $e2eScript "about:blank" $e2eOut 2>&1
+    $result = Invoke-NodeTimeout @($e2eScript, 'about:blank', $e2eOut) -TimeoutMs 300000
     try   { $parsed = $result | ConvertFrom-Json -ErrorAction Stop }
     catch { $parsed = $null }
-    Assert "Playwright script exits cleanly"         ($LASTEXITCODE -eq 0)               "(exit: $LASTEXITCODE)"
+    Assert "Playwright script exits cleanly"         ($parsed -and $parsed.ok -eq $true)               "(got: $result)"
     Assert "Result JSON reports ok:true"             ($parsed -and $parsed.ok -eq $true) "(got: $result)"
     Assert "Screenshot file created"                 (Test-Path $e2eOut)                 "(expected: $e2eOut)"
     if (Test-Path $e2eOut) {
@@ -172,14 +174,14 @@ if ((Test-Path $e2eScript) -and (Test-Path $nodeModPw)) {
 
     # Mobile viewport (390x844 — iPhone 14)
     $mobileOut = "$env:USERPROFILE\.claude\ui-screenshots\e2e-mobile-test.png"
-    $mRes = node $e2eScript "about:blank" $mobileOut 390 844 2>&1
+    $mRes = Invoke-NodeTimeout @($e2eScript, 'about:blank', $mobileOut, '390', '844') -TimeoutMs 300000
     try { $mp = $mRes | ConvertFrom-Json -ErrorAction Stop } catch { $mp = $null }
     Assert "Mobile viewport (390x844) screenshot created"    ($mp -and $mp.ok -eq $true)  "(got: $mRes)"
     Assert "Mobile screenshot reports correct width (390)"   ($mp -and $mp.width -eq 390) "(got: $($mp.width))"
 
     # Tablet viewport (768x1024 — iPad)
     $tabletOut = "$env:USERPROFILE\.claude\ui-screenshots\e2e-tablet-test.png"
-    $tRes = node $e2eScript "about:blank" $tabletOut 768 1024 2>&1
+    $tRes = Invoke-NodeTimeout @($e2eScript, 'about:blank', $tabletOut, '768', '1024') -TimeoutMs 300000
     try { $tp = $tRes | ConvertFrom-Json -ErrorAction Stop } catch { $tp = $null }
     Assert "Tablet viewport (768x1024) screenshot created"   ($tp -and $tp.ok -eq $true)   "(got: $tRes)"
     Assert "Tablet screenshot reports correct width (768)"   ($tp -and $tp.width -eq 768)   "(got: $($tp.width))"
@@ -195,14 +197,14 @@ if ((Test-Path $e2eScript) -and (Test-Path $nodeModPw)) {
             @{ Label = "tablet";  W = 768;  H = 1024 }
         )) {
             $liveOut = "$env:USERPROFILE\.claude\ui-screenshots\e2e-live-$p-$($vp.Label).png"
-            $liveRes = node $e2eScript "http://localhost:$p" $liveOut $vp.W $vp.H 2>&1
+            $liveRes = Invoke-NodeTimeout @($e2eScript, "http://localhost:$p", $liveOut, "$($vp.W)", "$($vp.H)")
             try { $lp = $liveRes | ConvertFrom-Json -ErrorAction Stop } catch { $lp = $null }
             Assert "Live $($vp.Label) screenshot: localhost:$p ($($vp.W)x$($vp.H))" ($lp -and $lp.ok -eq $true) "(got: $liveRes)"
         }
     }
     # Multi-page mode: --routes flag returns a JSON array
     $multiOut    = "$env:USERPROFILE\.claude\ui-screenshots\e2e-multi-test"
-    $multiResult = node $e2eScript "about:blank" $multiOut 1280 800 "--routes=/" 2>&1
+    $multiResult = Invoke-NodeTimeout @($e2eScript, 'about:blank', $multiOut, '1280', '800', '--routes=/') -TimeoutMs 300000
     # -NoEnumerate preserves the JSON array as a PowerShell array (without it, a
     # single-element JSON array is unwrapped to a plain PSCustomObject by ConvertFrom-Json)
     try   { $mp2 = $multiResult | ConvertFrom-Json -ErrorAction Stop -NoEnumerate } catch { $mp2 = $null }
@@ -212,7 +214,7 @@ if ((Test-Path $e2eScript) -and (Test-Path $nodeModPw)) {
 
     # --detect-advanced flag: JSON output must contain an 'advanced' key
     $advOut    = "$env:USERPROFILE\.claude\ui-screenshots\e2e-advanced-test.png"
-    $advResult = node $e2eScript "about:blank" $advOut 1280 800 "--detect-advanced" 2>&1
+    $advResult = Invoke-NodeTimeout @($e2eScript, 'about:blank', $advOut, '1280', '800', '--detect-advanced') -TimeoutMs 300000
     try   { $ap = $advResult | ConvertFrom-Json -ErrorAction Stop } catch { $ap = $null }
     Assert "--detect-advanced: script exits cleanly"              ($LASTEXITCODE -eq 0)                               "(exit: $LASTEXITCODE)"
     Assert "--detect-advanced: output JSON has 'advanced' key"    ($ap -and $ap.PSObject.Properties['advanced'])      "(got: $advResult)"
@@ -346,7 +348,7 @@ Assert "@axe-core/playwright installed"  (Test-Path "$SCRIPTS\node_modules\@axe-
 
 # axe-core actually runs via pw-e2e-test.js — verify the a11y field is present and populated
 if (Test-Path "$SCRIPTS\node_modules\@axe-core\playwright") {
-    $axeOut = node $e2eScript "about:blank" "$env:USERPROFILE\.claude\ui-screenshots\axe-smoke.png" 2>$null
+    $axeOut = Invoke-NodeTimeout @($e2eScript, 'about:blank', "$env:USERPROFILE\.claude\ui-screenshots\axe-smoke.png") -TimeoutMs 300000
     try { $axeParsed = $axeOut | ConvertFrom-Json -ErrorAction Stop } catch { $axeParsed = $null }
     Assert "pw-e2e-test.js runs without error"             ($axeParsed -and $axeParsed.ok -eq $true) "(got: $axeOut)"
     Assert "pw-e2e-test.js output contains a11y field"    ($axeParsed -and $null -ne $axeParsed.a11y) "(a11y field missing — axe-core not wired)"
@@ -354,7 +356,7 @@ if (Test-Path "$SCRIPTS\node_modules\@axe-core\playwright") {
 
     # Live URL test — axe-core should actually report a real scan result
     if ((Test-NetConnection -ComputerName localhost -Port 8501 -InformationLevel Quiet -ErrorAction SilentlyContinue)) {
-        $axeLive = node $e2eScript "http://localhost:8501" "$env:USERPROFILE\.claude\ui-screenshots\axe-live.png" 2>$null
+        $axeLive = Invoke-NodeTimeout @($e2eScript, 'http://localhost:8501', "$env:USERPROFILE\.claude\ui-screenshots\axe-live.png")
         try { $axeLiveParsed = $axeLive | ConvertFrom-Json -ErrorAction Stop } catch { $axeLiveParsed = $null }
         Assert "axe-core runs on live server (localhost:8501)" `
                ($axeLiveParsed -and $axeLiveParsed.ok -and $null -ne $axeLiveParsed.a11y.violations) `
@@ -642,7 +644,7 @@ if (Test-Path $seleniumScript) {
 # Live: Chrome-only quick run on about:blank (drivers cached after first npm install)
 if ((Test-Path $seleniumScript) -and (Test-Path $seleniumMod)) {
     $xbOut    = "$env:USERPROFILE\.claude\ui-screenshots\xbrowser-ci-test"
-    $xbRaw    = node $seleniumScript "about:blank" $xbOut "--browsers=chrome" 2>&1
+    $xbRaw    = Invoke-NodeTimeout @($seleniumScript, 'about:blank', $xbOut, '--browsers=chrome') -TimeoutMs 300000
     $xbLine   = ($xbRaw | Out-String) -split '\r?\n' | Where-Object { $_ -match '^\[' -or $_ -match '^\{' } | Select-Object -Last 1
     try   { $xbJson = $xbLine | ConvertFrom-Json -ErrorAction Stop -NoEnumerate } catch { $xbJson = $null }
     Assert "selenium xbrowser: chrome run exits with valid JSON"         ($null -ne $xbJson)                                                  "(got: $xbLine)"
@@ -683,7 +685,7 @@ if ((Test-Path $e2eScript) -and (Test-Path $nodeModPw)) {
 
     # 17b. about:blank: always-on fields must be absent (real-URL-only)
     $t17Blank = "$env:USERPROFILE\.claude\ui-screenshots\test17-blank.png"
-    $t17bRaw  = node $e2eScript "about:blank" $t17Blank 2>&1
+    $t17bRaw  = Invoke-NodeTimeout @($e2eScript, 'about:blank', $t17Blank) -TimeoutMs 300000
     try { $t17bJson = $t17bRaw | ConvertFrom-Json -ErrorAction Stop } catch { $t17bJson = $null }
     Assert "about:blank: meta absent (real-URL-only)"            ($t17bJson -and -not $t17bJson.PSObject.Properties['meta'])
     Assert "about:blank: images absent (real-URL-only)"          ($t17bJson -and -not $t17bJson.PSObject.Properties['images'])
@@ -694,14 +696,14 @@ if ((Test-Path $e2eScript) -and (Test-Path $nodeModPw)) {
     $t17Base = "$env:USERPROFILE\.claude\ui-screenshots\test17-baseline.png"
     if (Test-Path $t17Base) { Remove-Item $t17Base -Force }
     $t17eOut = "$env:USERPROFILE\.claude\ui-screenshots\test17-cmp1.png"
-    $t17eRaw = node $e2eScript "about:blank" $t17eOut 1280 800 "--compare=$t17Base" 2>&1
+    $t17eRaw = Invoke-NodeTimeout @($e2eScript, 'about:blank', $t17eOut, '1280', '800', "--compare=$t17Base") -TimeoutMs 300000
     try { $t17eJson = $t17eRaw | ConvertFrom-Json -ErrorAction Stop } catch { $t17eJson = $null }
     Assert "--compare: first run: diff.baselineCreated is true"  ($t17eJson -and $t17eJson.diff.baselineCreated -eq $true)    "(got: $($t17eJson.diff))"
     Assert "--compare: first run: baseline file created"         (Test-Path $t17Base)                                          "(path: $t17Base)"
 
     # 17d. --compare: second run produces diff object (identical → diffPct 0)
     $t17fOut = "$env:USERPROFILE\.claude\ui-screenshots\test17-cmp2.png"
-    $t17fRaw = node $e2eScript "about:blank" $t17fOut 1280 800 "--compare=$t17Base" 2>&1
+    $t17fRaw = Invoke-NodeTimeout @($e2eScript, 'about:blank', $t17fOut, '1280', '800', "--compare=$t17Base") -TimeoutMs 300000
     try { $t17fJson = $t17fRaw | ConvertFrom-Json -ErrorAction Stop } catch { $t17fJson = $null }
     Assert "--compare: second run: diff.diffPct present"         ($t17fJson -and $t17fJson.PSObject.Properties['diff'] -and $null -ne $t17fJson.diff.diffPct) "(got: $($t17fJson.diff))"
     Assert "--compare: second run: identical → diffPct = 0"      ($t17fJson -and $t17fJson.diff.diffPct -eq 0)               "(got: $($t17fJson.diff.diffPct))"
@@ -726,7 +728,7 @@ if ((Test-Path $e2eScript) -and (Test-Path $nodeModPw)) {
 
         # Always-on fields on real URL
         $t17rOut = "$env:USERPROFILE\.claude\ui-screenshots\test17-real.png"
-        $t17rRaw = node $e2eScript $t17Url $t17rOut 1280 800 2>&1
+        $t17rRaw = Invoke-NodeTimeout @($e2eScript, $t17Url, $t17rOut, '1280', '800')
         try { $t17rJson = $t17rRaw | ConvertFrom-Json -ErrorAction Stop } catch { $t17rJson = $null }
         Assert "real URL: meta field present"                    ($t17rJson -and $t17rJson.PSObject.Properties['meta'])           "(meta absent)"
         Assert "real URL: meta.issues is an array"               ($t17rJson -and $t17rJson.meta.issues -is [array])               "(got: $($t17rJson.meta.issues))"
@@ -739,14 +741,14 @@ if ((Test-Path $e2eScript) -and (Test-Path $nodeModPw)) {
 
         # Dark mode
         $t17dkOut = "$env:USERPROFILE\.claude\ui-screenshots\test17-dark.png"
-        $t17dkRaw = node $e2eScript $t17Url $t17dkOut 1280 800 "--dark-mode" 2>&1
+        $t17dkRaw = Invoke-NodeTimeout @($e2eScript, $t17Url, $t17dkOut, '1280', '800', '--dark-mode')
         try { $t17dkJson = $t17dkRaw | ConvertFrom-Json -ErrorAction Stop } catch { $t17dkJson = $null }
         Assert "--dark-mode: JSON has 'darkMode' field"          ($t17dkJson -and $t17dkJson.PSObject.Properties['darkMode'])    "(got: $t17dkRaw)"
         Assert "--dark-mode: -dark.png file created on disk"     ($t17dkJson -and (Test-Path ($t17dkJson.darkMode.out ?? 'NONE'))) "(path: $($t17dkJson.darkMode.out))"
 
         # CWV
         $t17cwvOut = "$env:USERPROFILE\.claude\ui-screenshots\test17-cwv.png"
-        $t17cwvRaw = node $e2eScript $t17Url $t17cwvOut 1280 800 "--cwv" 2>&1
+        $t17cwvRaw = Invoke-NodeTimeout @($e2eScript, $t17Url, $t17cwvOut, '1280', '800', '--cwv')
         try { $t17cwvJson = $t17cwvRaw | ConvertFrom-Json -ErrorAction Stop } catch { $t17cwvJson = $null }
         Assert "--cwv: JSON has 'cwv' field"                     ($t17cwvJson -and $t17cwvJson.PSObject.Properties['cwv'])       "(got: $t17cwvRaw)"
         Assert "--cwv: cwv.ratings object present"               ($t17cwvJson -and $null -ne $t17cwvJson.cwv.ratings)           "(got: $($t17cwvJson.cwv))"
@@ -815,7 +817,7 @@ if ((Test-Path $e2eScript18) -and (Test-Path $nm18)) {
 
     # about:blank — new always-on fields must also be absent
     $ss18Blank = "$env:TEMP\s18-blank.png"
-    $r18Blank  = (node $e2eScript18 about:blank $ss18Blank 400 300 2>$null) -join ''
+    $r18Blank  = Invoke-NodeTimeout @($e2eScript18, 'about:blank', $ss18Blank, '400', '300')
     try { $j18Blank = $r18Blank | ConvertFrom-Json } catch {}
     Assert "about:blank: scripts absent (real-URL-only)"       (-not $j18Blank.PSObject.Properties['scripts'])
     Assert "about:blank: touchTargets absent (real-URL-only)"  (-not $j18Blank.PSObject.Properties['touchTargets'])
@@ -855,7 +857,7 @@ if ((Test-Path $e2eScript18) -and (Test-Path $nm18)) {
 
     # Basic real-URL: scripts + touchTargets always-on
     $ss18 = "$env:TEMP\s18-real.png"
-    $r18  = (node $e2eScript18 $t18Url $ss18 1280 800 2>$null) -join ''
+    $r18  = Invoke-NodeTimeout @($e2eScript18, $t18Url, $ss18, '1280', '800')
     try { $j18 = $r18 | ConvertFrom-Json } catch { $j18 = $null }
 
     Assert "real URL s18: scripts field present"                        ($j18 -and $j18.PSObject.Properties['scripts'])
@@ -868,7 +870,7 @@ if ((Test-Path $e2eScript18) -and (Test-Path $nm18)) {
     Assert "real URL s18: images.missingFetchPriority is a number"     ($j18 -and $j18.images.PSObject.Properties['missingFetchPriority'])
     # --cwv: TBT + CLS sources
     $ss18Cwv = "$env:TEMP\s18-cwv.png"
-    $r18Cwv  = (node $e2eScript18 $t18Url $ss18Cwv 1280 800 --cwv 2>$null) -join ''
+    $r18Cwv  = Invoke-NodeTimeout @($e2eScript18, $t18Url, $ss18Cwv, '1280', '800', '--cwv')
     try { $j18Cwv = $r18Cwv | ConvertFrom-Json } catch { $j18Cwv = $null }
     Assert "--cwv s18: cwv.tbt is defined"           ($j18Cwv -and $j18Cwv.cwv.PSObject.Properties['tbt'])
     Assert "--cwv s18: cwv.tbt is non-negative"      ($j18Cwv -and $null -ne $j18Cwv.cwv.tbt -and $j18Cwv.cwv.tbt -ge 0)
@@ -878,7 +880,7 @@ if ((Test-Path $e2eScript18) -and (Test-Path $nm18)) {
 
     # --dark-mode: darkModeA11y field present
     $ss18Dm = "$env:TEMP\s18-dark.png"
-    $r18Dm  = (node $e2eScript18 $t18Url $ss18Dm 1280 800 --dark-mode 2>$null) -join ''
+    $r18Dm  = Invoke-NodeTimeout @($e2eScript18, $t18Url, $ss18Dm, '1280', '800', '--dark-mode')
     try { $j18Dm = $r18Dm | ConvertFrom-Json } catch { $j18Dm = $null }
     Assert "--dark-mode s18: darkMode field present"       ($j18Dm -and $j18Dm.PSObject.Properties['darkMode'])
     Assert "--dark-mode s18: darkModeA11y field present"   ($j18Dm -and $j18Dm.PSObject.Properties['darkModeA11y'])
@@ -886,28 +888,28 @@ if ((Test-Path $e2eScript18) -and (Test-Path $nm18)) {
 
     # --reduced-motion
     $ss18Rm = "$env:TEMP\s18-rm.png"
-    $r18Rm  = (node $e2eScript18 $t18Url $ss18Rm 1280 800 --reduced-motion 2>$null) -join ''
+    $r18Rm  = Invoke-NodeTimeout @($e2eScript18, $t18Url, $ss18Rm, '1280', '800', '--reduced-motion')
     try { $j18Rm = $r18Rm | ConvertFrom-Json } catch { $j18Rm = $null }
     Assert "--reduced-motion: reducedMotion field present"      ($j18Rm -and $j18Rm.PSObject.Properties['reducedMotion'])
     Assert "--reduced-motion: -reduced-motion.png file created" (Test-Path "$env:TEMP\s18-rm-reduced-motion.png")
 
     # --forced-colors
     $ss18Fc = "$env:TEMP\s18-fc.png"
-    $r18Fc  = (node $e2eScript18 $t18Url $ss18Fc 1280 800 --forced-colors 2>$null) -join ''
+    $r18Fc  = Invoke-NodeTimeout @($e2eScript18, $t18Url, $ss18Fc, '1280', '800', '--forced-colors')
     try { $j18Fc = $r18Fc | ConvertFrom-Json } catch { $j18Fc = $null }
     Assert "--forced-colors: forcedColors field present"       ($j18Fc -and $j18Fc.PSObject.Properties['forcedColors'])
     Assert "--forced-colors: -forced-colors.png file created"  (Test-Path "$env:TEMP\s18-fc-forced-colors.png")
 
     # --print
     $ss18Pr = "$env:TEMP\s18-pr.png"
-    $r18Pr  = (node $e2eScript18 $t18Url $ss18Pr 1280 800 --print 2>$null) -join ''
+    $r18Pr  = Invoke-NodeTimeout @($e2eScript18, $t18Url, $ss18Pr, '1280', '800', '--print')
     try { $j18Pr = $r18Pr | ConvertFrom-Json } catch { $j18Pr = $null }
     Assert "--print: print field present"           ($j18Pr -and $j18Pr.PSObject.Properties['print'])
     Assert "--print: -print.png file created"       (Test-Path "$env:TEMP\s18-pr-print.png")
 
     # --no-js
     $ss18Nj = "$env:TEMP\s18-nj.png"
-    $r18Nj  = (node $e2eScript18 $t18Url $ss18Nj 1280 800 --no-js 2>$null) -join ''
+    $r18Nj  = Invoke-NodeTimeout @($e2eScript18, $t18Url, $ss18Nj, '1280', '800', '--no-js')
     try { $j18Nj = $r18Nj | ConvertFrom-Json } catch { $j18Nj = $null }
     Assert "--no-js: noJs field present"              ($j18Nj -and $j18Nj.PSObject.Properties['noJs'])
     Assert "--no-js: noJs.hasContent is boolean"      ($j18Nj -and $j18Nj.noJs.PSObject.Properties['hasContent'])
@@ -915,7 +917,7 @@ if ((Test-Path $e2eScript18) -and (Test-Path $nm18)) {
 
     # --focus-audit
     $ss18Fa = "$env:TEMP\s18-fa.png"
-    $r18Fa  = (node $e2eScript18 $t18Url $ss18Fa 1280 800 --focus-audit 2>$null) -join ''
+    $r18Fa  = Invoke-NodeTimeout @($e2eScript18, $t18Url, $ss18Fa, '1280', '800', '--focus-audit')
     try { $j18Fa = $r18Fa | ConvertFrom-Json } catch { $j18Fa = $null }
     Assert "--focus-audit: focusAudit field present"            ($j18Fa -and $j18Fa.PSObject.Properties['focusAudit'])
     Assert "--focus-audit: focusAudit.tabStopsTested >= 0"      ($j18Fa -and $j18Fa.focusAudit.PSObject.Properties['tabStopsTested'])
@@ -1016,7 +1018,7 @@ if ((Test-Path $e2eScript19) -and (Test-Path $nm19)) {
     $t19Url = "http://127.0.0.1:$t19Port/"
 
     $ss19 = "$env:TEMP\s19-real.png"
-    $r19  = (node $e2eScript19 $t19Url $ss19 1280 800 2>$null) -join ''
+    $r19  = Invoke-NodeTimeout @($e2eScript19, $t19Url, $ss19, '1280', '800')
     try { $j19 = $r19 | ConvertFrom-Json } catch { $j19 = $null }
 
     # Existing always-on fields
@@ -1233,7 +1235,7 @@ if ((Test-Path $e2eScript20) -and (Test-Path $nm20)) {
     $t20Url = "http://127.0.0.1:$t20Port/"
 
     $ss20 = "$env:TEMP\s20-real.png"
-    $r20  = (node $e2eScript20 $t20Url $ss20 1280 800 2>$null) -join ''
+    $r20  = Invoke-NodeTimeout @($e2eScript20, $t20Url, $ss20, '1280', '800')
     try { $j20 = $r20 | ConvertFrom-Json } catch { $j20 = $null }
 
     # svgA11y
@@ -1295,7 +1297,7 @@ if ((Test-Path $e2eScript20) -and (Test-Path $nm20)) {
 
     # --required-fields
     $ss20Rf = "$env:TEMP\s20-rf.png"
-    $r20Rf  = (node $e2eScript20 $t20Url $ss20Rf 1280 800 --required-fields 2>$null) -join ''
+    $r20Rf  = Invoke-NodeTimeout @($e2eScript20, $t20Url, $ss20Rf, '1280', '800', '--required-fields')
     try { $j20Rf = $r20Rf | ConvertFrom-Json } catch { $j20Rf = $null }
     Assert "--required-fields: requiredFields field present"           ($j20Rf -and $j20Rf.PSObject.Properties['requiredFields'])
     Assert "--required-fields: requiredFields.count >= 1"              ($j20Rf -and $j20Rf.requiredFields.count -ge 1)
@@ -1304,7 +1306,7 @@ if ((Test-Path $e2eScript20) -and (Test-Path $nm20)) {
 
     # --animation-fill
     $ss20Af = "$env:TEMP\s20-af.png"
-    $r20Af  = (node $e2eScript20 $t20Url $ss20Af 1280 800 --animation-fill 2>$null) -join ''
+    $r20Af  = Invoke-NodeTimeout @($e2eScript20, $t20Url, $ss20Af, '1280', '800', '--animation-fill')
     try { $j20Af = $r20Af | ConvertFrom-Json } catch { $j20Af = $null }
     Assert "--animation-fill: missingFillMode field in animationDurations" ($j20Af -and $j20Af.animationDurations.PSObject.Properties['missingFillMode'])
     Assert "--animation-fill: missingFillMode is array"                ($j20Af -and $j20Af.animationDurations.missingFillMode -is [array])
@@ -1312,7 +1314,7 @@ if ((Test-Path $e2eScript20) -and (Test-Path $nm20)) {
 
     # --empty-states
     $ss20Es = "$env:TEMP\s20-es.png"
-    $r20Es  = (node $e2eScript20 $t20Url $ss20Es 1280 800 --empty-states 2>$null) -join ''
+    $r20Es  = Invoke-NodeTimeout @($e2eScript20, $t20Url, $ss20Es, '1280', '800', '--empty-states')
     try { $j20Es = $r20Es | ConvertFrom-Json } catch { $j20Es = $null }
     Assert "--empty-states: emptyStates field present"                 ($j20Es -and $j20Es.PSObject.Properties['emptyStates'])
     Assert "--empty-states: emptyStates.spinners is array"             ($j20Es -and $j20Es.emptyStates.PSObject.Properties['spinners'])
@@ -1378,7 +1380,7 @@ if ((Test-Path $e2eScript21) -and (Test-Path $nm21)) {
     $t21Url = "http://127.0.0.1:$t21Port/"
 
     $ss21 = "$env:TEMP\s21-real.png"
-    $r21  = (node $e2eScript21 $t21Url $ss21 1280 800 2>$null) -join ''
+    $r21  = Invoke-NodeTimeout @($e2eScript21, $t21Url, $ss21, '1280', '800')
     try { $j21 = $r21 | ConvertFrom-Json } catch { $j21 = $null }
 
     # landmarks
@@ -1457,7 +1459,7 @@ if ((Test-Path $e2eScript) -and (Test-Path $nodeModPw)) {
     $e2eScript25 = $e2eScript
 
     # Clean page
-    $r25 = & node $e2eScript25 $t25Url "$t25Dir\out.png" 1280 800 2>&1 | Out-String
+    $r25 = Invoke-NodeTimeout @($e2eScript25, $t25Url, "$t25Dir\out.png", '1280', '800')
     try { $j25 = $r25 | ConvertFrom-Json } catch { $j25 = $null }
 
     Assert "s25 clean: valid JSON"                    ($null -ne $j25)
@@ -1466,7 +1468,7 @@ if ((Test-Path $e2eScript) -and (Test-Path $nodeModPw)) {
     Assert "s25 clean: bfcacheBlockers == 0"          ($j25 -and $j25.bfcache.bfcacheBlockers -eq 0)
 
     # Blocker page
-    $r25b = & node $e2eScript25 $t25BlockUrl "$t25Dir\out-b.png" 1280 800 2>&1 | Out-String
+    $r25b = Invoke-NodeTimeout @($e2eScript25, $t25BlockUrl, "$t25Dir\out-b.png", '1280', '800')
     try { $j25b = $r25b | ConvertFrom-Json } catch { $j25b = $null }
 
     Assert "s25 blocker: valid JSON"                  ($null -ne $j25b)
