@@ -1,113 +1,92 @@
 #!/bin/sh
-# Block pushes that would expose personal identifiers in:
-#   - annotated tag tagger header (name + email embedded in the tag object)
-#   - annotated tag message body
+# Blocks pushes that expose restricted identifiers in:
 #   - commit author / committer identities in the pushed commit range
+#   - annotated tag tagger header and message body
 #
-# Note: git tag -a has no pre-tag hook — this pre-push check is the only
-# client-side gate for annotated tags.
+# git tag -a has no pre-tag hook; this is the only client-side gate for tags.
 #
 # Activate with: git config core.hooksPath .githooks
 
-BLOCKED_FILE="$(git rev-parse --show-toplevel)/.githooks/blocked-patterns"
+_F="$(git rev-parse --show-toplevel)/.githooks/blocked-patterns"
 
-if [ ! -f "$BLOCKED_FILE" ]; then
-    exit 0
-fi
+[ ! -f "$_F" ] && exit 0
 
-FORBIDDEN=""
-while IFS= read -r line; do
-    line=$(printf '%s' "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-    case "$line" in
+_P=""
+while IFS= read -r _l; do
+    _l=$(printf '%s' "$_l" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    case "$_l" in
         ''|\#*) continue ;;
     esac
-    if [ -z "$FORBIDDEN" ]; then
-        FORBIDDEN="$line"
+    if [ -z "$_P" ]; then
+        _P="$_l"
     else
-        FORBIDDEN="$FORBIDDEN\|$line"
+        _P="$_P\|$_l"
     fi
-done < "$BLOCKED_FILE"
+done < "$_F"
 
-if [ -z "$FORBIDDEN" ]; then
-    exit 0
-fi
+[ -z "$_P" ] && exit 0
 
-FAILED=0
+_FAILED=0
 
-# stdin: <local-ref> <local-sha1> <remote-ref> <remote-sha1>
-while read -r local_ref local_sha remote_ref remote_sha; do
+while read -r _lref _lsha _rref _rsha; do
+    [ "$_lsha" = "0000000000000000000000000000000000000000" ] && continue
 
-    # Skip deletes
-    [ "$local_sha" = "0000000000000000000000000000000000000000" ] && continue
+    _type=$(git cat-file -t "$_lsha" 2>/dev/null)
 
-    obj_type=$(git cat-file -t "$local_sha" 2>/dev/null)
+    if [ "$_type" = "tag" ]; then
+        # Annotated tag: scan full raw object (tagger name+email + message body)
+        _raw=$(git cat-file tag "$_lsha" 2>/dev/null)
 
-    if [ "$obj_type" = "tag" ]; then
-        # ── Annotated tag: check the FULL raw object ───────────────────
-        # The raw object contains:
-        #   object <sha>
-        #   type commit
-        #   tag <name>
-        #   tagger Name <email> <timestamp>    ← personal identity lives here
-        #   <blank line>
-        #   <message body>
-        raw_tag=$(git cat-file tag "$local_sha" 2>/dev/null)
+        if printf '%s' "$_raw" | grep -iq "$_P"; then
+            echo "ERROR: Annotated tag contains a restricted identifier."
+            printf '  Tag ref: %s\n' "$_rref"
 
-        if printf '%s' "$raw_tag" | grep -iq "$FORBIDDEN"; then
-            echo "ERROR: Annotated tag contains blocked identifiers."
-            printf '  Tag ref: %s\n' "$remote_ref"
+            _tagger=$(printf '%s' "$_raw" | grep "^tagger ")
+            _body=$(printf '%s' "$_raw" | sed '1,/^$/d')
 
-            tagger_line=$(printf '%s' "$raw_tag" | grep "^tagger ")
-            tag_body=$(printf '%s' "$raw_tag" | sed '1,/^$/d')
-
-            if printf '%s' "$tagger_line" | grep -iq "$FORBIDDEN"; then
-                printf '  Tagger:  %s\n' "$tagger_line"
-                echo "  (blocked identifier in tagger name or email)"
+            if printf '%s' "$_tagger" | grep -iq "$_P"; then
+                printf '  Tagger:  %s\n' "$_tagger"
             fi
-            if printf '%s' "$tag_body" | grep -iq "$FORBIDDEN"; then
-                echo "  (blocked identifier in tag message body)"
+            if printf '%s' "$_body" | grep -iq "$_P"; then
+                echo "  (restricted identifier in tag message)"
             fi
 
-            tag_name=$(printf '%s' "$remote_ref" | sed 's|refs/tags/||')
+            _tname=$(printf '%s' "$_rref" | sed 's|refs/tags/||')
             echo ""
-            echo "Delete and recreate with a clean identity:"
-            printf '  git tag -d %s\n' "$tag_name"
-            printf '  git config user.name  "Developer"\n'
-            printf '  git config user.email "fredman08@users.noreply.github.com"\n'
-            printf '  git tag -a %s -m "your message"\n' "$tag_name"
-            FAILED=1
+            echo "Delete and recreate the tag with a clean identity:"
+            printf '  git tag -d %s\n' "$_tname"
+            echo '  git config user.name  "<your-name>"'
+            echo '  git config user.email "<your-email>"'
+            printf '  git tag -a %s -m "<message>"\n' "$_tname"
+            _FAILED=1
         fi
 
     else
-        # ── Commit range: check author + committer identities ──────────
-        # Determine the range of commits being pushed.
-        # remote_sha = zeros means the remote branch doesn't exist yet.
-        if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
-            commit_range="$local_sha"
+        # Commit range: check author + committer identities for every pushed commit
+        if [ "$_rsha" = "0000000000000000000000000000000000000000" ]; then
+            _range="$_lsha"
         else
-            commit_range="${remote_sha}..${local_sha}"
+            _range="${_rsha}..${_lsha}"
         fi
 
-        # %an = author name, %ae = author email
-        # %cn = committer name, %ce = committer email
-        bad=$(git log --format="%H  author: %an <%ae>  committer: %cn <%ce>" \
-                "$commit_range" 2>/dev/null \
-            | grep -i "$FORBIDDEN")
+        _bad=$(git log --format="%H  author: %an <%ae>  committer: %cn <%ce>" \
+                "$_range" 2>/dev/null \
+            | grep -i "$_P")
 
-        if [ -n "$bad" ]; then
-            echo "ERROR: Pushed commits contain blocked identifiers in author/committer identity:"
-            printf '%s\n' "$bad" | while IFS= read -r entry; do
-                printf '  %s\n' "$entry"
+        if [ -n "$_bad" ]; then
+            echo "ERROR: Pushed commits contain a restricted identifier in author/committer identity:"
+            printf '%s\n' "$_bad" | while IFS= read -r _entry; do
+                printf '  %s\n' "$_entry"
             done
             echo ""
-            echo "Rewrite history to fix the identity, then retry:"
-            echo "  git config user.name  'Developer'"
-            echo "  git config user.email 'fredman08@users.noreply.github.com'"
-            echo "  git rebase -i <base-sha>  # recommit with corrected identity"
-            FAILED=1
+            echo "Fix the identity and rewrite history before pushing:"
+            echo '  git config user.name  "<your-name>"'
+            echo '  git config user.email "<your-email>"'
+            echo "  git rebase -i <base-sha>"
+            _FAILED=1
         fi
     fi
 
 done
 
-exit $FAILED
+exit $_FAILED

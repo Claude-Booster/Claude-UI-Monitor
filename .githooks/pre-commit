@@ -1,68 +1,73 @@
 #!/usr/bin/env bash
-# Pre-commit: blocks commits containing patterns defined in .githooks/blocked-patterns
-# That file is gitignored — copy blocked-patterns.example to blocked-patterns and fill it in.
-# Activate: git config core.hooksPath .githooks
+# Blocks commits that expose personal identifiers.
+#
+# Identity resolution (mirrors git's own order):
+#   1. GIT_COMMITTER_* / GIT_AUTHOR_* env vars
+#   2. git config user.name / user.email
+#   3. OS fallback (%USERNAME%@%USERDOMAIN% or whoami@hostname)
+#      — only checked when git config is unset
+#
+# Staged file content is also scanned.
+# Files under .githooks/ are never scanned (pattern definitions live there).
+#
+# Activate with: git config core.hooksPath .githooks
 
-SELF=".githooks/pre-commit"
-PATTERNS=".githooks/blocked-patterns"
+_F="$(git rev-parse --show-toplevel)/.githooks/blocked-patterns"
 
-if [ ! -f "$PATTERNS" ]; then
-  printf 'pre-commit: %s not found — skipping restricted-identifier check.\n' "$PATTERNS" >&2
-  printf '  Copy .githooks/blocked-patterns.example → .githooks/blocked-patterns and add your patterns.\n' >&2
+if [ ! -f "$_F" ]; then
+  printf 'pre-commit: %s not found — skipping restricted-identifier check.\n' "$_F" >&2
+  printf '  Copy .githooks/blocked-patterns.example → .githooks/blocked-patterns and fill it in.\n' >&2
   exit 0
 fi
 
-# Check committer identity (git config + env var overrides) against blocked patterns.
-# GIT_AUTHOR_*/GIT_COMMITTER_* env vars take precedence over git config — resolve full chain.
-COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-${GIT_AUTHOR_EMAIL:-$(git config user.email 2>/dev/null)}}"
-COMMITTER_NAME="${GIT_COMMITTER_NAME:-${GIT_AUTHOR_NAME:-$(git config user.name 2>/dev/null)}}"
+# Resolve the full identity chain git would use for this commit.
+_EMAIL="${GIT_COMMITTER_EMAIL:-${GIT_AUTHOR_EMAIL:-$(git config user.email 2>/dev/null)}}"
+_NAME="${GIT_COMMITTER_NAME:-${GIT_AUTHOR_NAME:-$(git config user.name 2>/dev/null)}}"
 
-# Resolve OS-level fallback identity (%USERNAME%/%USERDOMAIN%/hostname).
-# git uses these when user.email is unset — check them explicitly so the error message
-# tells you exactly which OS value would leak.
-OS_USER="${USERNAME:-${USER:-}}"
-OS_DOMAIN="${USERDOMAIN:-$(hostname 2>/dev/null)}"
+# OS-level fallback — only relevant when git config is unset.
+_OS_USER="${USERNAME:-${USER:-}}"
+_OS_DOMAIN="${USERDOMAIN:-$(hostname 2>/dev/null)}"
 
-# If identity is empty git falls back to OS username@hostname — block and report the OS value.
-if [ -z "$COMMITTER_EMAIL" ]; then
+if [ -z "$_EMAIL" ]; then
   printf '\nCommit blocked: no git user.email configured.\n' >&2
-  printf '  Without an explicit identity git uses OS username@hostname (%s@%s), which may reveal personal info.\n' "$OS_USER" "$OS_DOMAIN" >&2
-  if printf '%s\n%s' "$OS_USER" "$OS_DOMAIN" | grep -qIEf "$PATTERNS" 2>/dev/null; then
+  printf '  Without an explicit identity git uses OS username@hostname (%s@%s).\n' "$_OS_USER" "$_OS_DOMAIN" >&2
+  if printf '%s\n%s' "$_OS_USER" "$_OS_DOMAIN" | grep -qIEf "$_F" 2>/dev/null; then
     printf '  OS identity matches a restricted pattern — would leak if used.\n' >&2
   fi
-  printf '  Fix: git config user.email "you@example.com"  (use a non-work address)\n' >&2
+  printf '  Fix: git config user.email "<your-email>"\n' >&2
   exit 1
 fi
 
-if printf '%s\n%s' "$COMMITTER_EMAIL" "$COMMITTER_NAME" | grep -qIEf "$PATTERNS" 2>/dev/null; then
+if printf '%s\n%s' "$_EMAIL" "$_NAME" | grep -qIEf "$_F" 2>/dev/null; then
   printf '\nCommit blocked: committer identity matches a restricted pattern.\n' >&2
   printf '  Source: git config or GIT_AUTHOR_EMAIL / GIT_COMMITTER_EMAIL env vars.\n' >&2
-  printf '  Fix:    git config user.email "you@example.com"  (use a non-work address)\n' >&2
+  printf '  Fix:    git config user.email "<your-email>"\n' >&2
   exit 1
 fi
 
-STAGED=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null)
-[ -z "$STAGED" ] && exit 0
+_STAGED=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null)
+[ -z "$_STAGED" ] && exit 0
 
-FOUND=0
-while IFS= read -r f; do
-  [ -z "$f" ]          && continue
-  [ "$f" = "$SELF" ]   && continue   # never scan this hook file itself
-  [ "$f" = "$PATTERNS" ] && continue # never scan the patterns file itself
+_FOUND=0
+while IFS= read -r _f; do
+  [ -z "$_f" ] && continue
+  # Never scan files under .githooks/ — pattern definitions live there.
+  case "$_f" in
+    .githooks/*) continue ;;
+  esac
 
-  CONTENT=$(git show ":$f" 2>/dev/null) || continue
+  _CONTENT=$(git show ":$_f" 2>/dev/null) || continue
 
-  if printf '%s' "$CONTENT" | grep -qIEf "$PATTERNS"; then
-    printf 'BLOCKED  %s\n' "$f" >&2
-    FOUND=1
+  if printf '%s' "$_CONTENT" | grep -qIEf "$_F"; then
+    printf 'BLOCKED  %s\n' "$_f" >&2
+    _FOUND=1
   fi
-done <<< "$STAGED"
+done <<< "$_STAGED"
 
-if [ "$FOUND" -eq 1 ]; then
-  printf '\nCommit blocked: staged files match a restricted pattern in %s\n' "$PATTERNS" >&2
+if [ "$_FOUND" -eq 1 ]; then
+  printf '\nCommit blocked: staged files match a restricted pattern in %s\n' "$_F" >&2
   printf 'Remove the restricted content and try again.\n' >&2
   exit 1
 fi
 
 exit 0
-
