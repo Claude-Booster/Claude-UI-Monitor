@@ -1,16 +1,73 @@
-#!/usr/bin/env bash
-# commit-msg: blocks commit messages containing patterns defined in .githooks/blocked-patterns
+#!/bin/sh
+# Block commit messages containing personal identifiers.
+# Also validates the commit identity as a belt-and-suspenders check.
+#
+# OS fallback identity is only checked when git config is unset,
+# mirroring git's own resolution order.
+#
+# Covers: git commit, git commit --amend, git cherry-pick, git merge, git rebase
+#
+# Activate with: git config core.hooksPath .githooks
 
-PATTERNS=".githooks/blocked-patterns"
+BLOCKED_FILE="$(git rev-parse --show-toplevel)/.githooks/blocked-patterns"
 MSG_FILE="$1"
 
-[ ! -f "$PATTERNS" ] && exit 0
-[ ! -f "$MSG_FILE"  ] && exit 0
+if [ ! -f "$BLOCKED_FILE" ]; then
+    exit 0
+fi
 
-if grep -qIEf "$PATTERNS" "$MSG_FILE" 2>/dev/null; then
-  printf '\nCommit blocked: commit message matches a restricted pattern in %s\n' "$PATTERNS" >&2
-  printf 'Edit the message to remove the restricted content.\n' >&2
-  exit 1
+FORBIDDEN=""
+while IFS= read -r line; do
+    line=$(printf '%s' "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    case "$line" in
+        ''|\#*) continue ;;
+    esac
+    if [ -z "$FORBIDDEN" ]; then
+        FORBIDDEN="$line"
+    else
+        FORBIDDEN="$FORBIDDEN\|$line"
+    fi
+done < "$BLOCKED_FILE"
+
+if [ -z "$FORBIDDEN" ]; then
+    exit 0
+fi
+
+# ── Guard 1: commit message content ────────────────────────────────────────
+if grep -q "$FORBIDDEN" "$MSG_FILE"; then
+    echo "ERROR: Commit message contains blocked identifiers."
+    echo "Edit the message to remove personal information before committing."
+    exit 1
+fi
+
+# ── Guard 2: env var identity (always override git config) ─────────────────
+ENV_IDENTITY="${GIT_AUTHOR_NAME:-} ${GIT_AUTHOR_EMAIL:-} ${GIT_COMMITTER_NAME:-} ${GIT_COMMITTER_EMAIL:-}"
+if printf '%s' "$ENV_IDENTITY" | grep -iq "$FORBIDDEN"; then
+    echo "ERROR: A blocked identifier is set in a GIT_AUTHOR_* or GIT_COMMITTER_* env var."
+    echo "Fix: unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL"
+    exit 1
+fi
+
+# ── Guard 3: git config identity ───────────────────────────────────────────
+CFG_NAME="$(git config user.name 2>/dev/null)"
+CFG_EMAIL="$(git config user.email 2>/dev/null)"
+
+if printf '%s' "$CFG_NAME $CFG_EMAIL" | grep -iq "$FORBIDDEN"; then
+    echo "ERROR: git config user.name or user.email contains a blocked identifier."
+    printf '  user.name  = %s\n' "${CFG_NAME:-<unset>}"
+    printf '  user.email = %s\n' "${CFG_EMAIL:-<unset>}"
+    echo "Fix: git config user.name 'Developer' && git config user.email 'fredman08@users.noreply.github.com'"
+    exit 1
+fi
+
+# ── Guard 4: OS fallback — only when git config is unset ───────────────────
+if [ -z "$CFG_NAME" ] || [ -z "$CFG_EMAIL" ]; then
+    OS_IDENTITY="$(whoami 2>/dev/null || id -un 2>/dev/null || printf '%s' "${USERNAME:-}") $(hostname 2>/dev/null || printf '%s' "${COMPUTERNAME:-}") ${USERDOMAIN:-}"
+    if printf '%s' "$OS_IDENTITY" | grep -iq "$FORBIDDEN"; then
+        echo "ERROR: git config is unset and the OS identity contains a blocked identifier."
+        echo "Fix: git config user.name 'Developer' && git config user.email 'fredman08@users.noreply.github.com'"
+        exit 1
+    fi
 fi
 
 exit 0
