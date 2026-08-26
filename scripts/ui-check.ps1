@@ -40,6 +40,30 @@ if ($ext -in @('.css', '.scss', '.sass', '.less')) {
     }
 }
 
+# ── Playwright pre-flight: browser binaries + weekly package sync ─────────────
+$scriptsDir = $PSScriptRoot   # same directory as ui-check.ps1
+# Ensure chromium binaries exist (installs only when absent — fast no-op otherwise)
+if (-not (Test-Path "$env:LOCALAPPDATA\ms-playwright\chromium-*")) {
+    if (Test-Path $scriptsDir) {
+        Push-Location $scriptsDir
+        try { npx playwright install chromium 2>&1 | Out-Null } catch {}
+        Pop-Location
+    }
+}
+# Weekly drift check: keeps scripts/node_modules in sync with the latest npx/MCP version
+$pwSentinel = "$env:USERPROFILE\.claude\.pw-drift-check"
+$needsSync = -not (Test-Path $pwSentinel) -or
+             ((Get-Date) - (Get-Item $pwSentinel -ErrorAction SilentlyContinue).LastWriteTime).TotalDays -gt 7
+if ($needsSync -and (Test-Path $scriptsDir)) {
+    Push-Location $scriptsDir
+    try {
+        npm update playwright @playwright/test 2>&1 | Out-Null
+        npx playwright install chromium 2>&1 | Out-Null
+    } catch {}
+    Pop-Location
+    Set-Content $pwSentinel (Get-Date -Format 'o') -ErrorAction SilentlyContinue
+}
+
 # ── Detect running dev server ─────────────────────────────────────────────────
 # Port list is loaded from framework-registry.json so adding a new framework
 # there is the only change needed — no edits required here.

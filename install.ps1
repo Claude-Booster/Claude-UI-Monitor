@@ -170,10 +170,18 @@ Pop-Location
 OK "npm install complete"
 
 # ── 12. Playwright Chromium ───────────────────────────────────────────────────
-Step "Installing Playwright Chromium..."
+Step "Checking Playwright Chromium..."
 $env:PLAYWRIGHT_BROWSERS_PATH = 0   # use default per-package location
-& node (Join-Path $claudeDir 'scripts\node_modules\.bin\playwright') install chromium 2>&1 | Out-Null
-OK "Playwright Chromium installed"
+Push-Location (Join-Path $claudeDir 'scripts')
+$pwExe = (node -e "try{const{chromium}=require('playwright');console.log(chromium.executablePath())}catch(e){}" 2>$null).Trim()
+Pop-Location
+if ($pwExe -and (Test-Path $pwExe)) {
+    OK "Playwright Chromium already installed — skipping download"
+} else {
+    Step "Installing Playwright Chromium (first-time or version upgrade)..."
+    & node (Join-Path $claudeDir 'scripts\node_modules\.bin\playwright') install chromium 2>&1 | Out-Null
+    OK "Playwright Chromium installed"
+}
 
 # ── 13. Stylelint global ──────────────────────────────────────────────────────
 Step "Installing stylelint globally..."

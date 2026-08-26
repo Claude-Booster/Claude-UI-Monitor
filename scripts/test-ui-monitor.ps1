@@ -43,6 +43,30 @@ function Invoke-NodeTimeout {
     return $result
 }
 
+# ── 0. Playwright preflight ─────────────────────────────────────────────────
+Write-Host "`n── 0. Playwright preflight ───────────────────────────────────" -ForegroundColor Cyan
+
+$pwPkg = Join-Path $SCRIPTS "node_modules\playwright"
+$pwCli = Join-Path $SCRIPTS "node_modules\.bin\playwright.cmd"
+
+if (-not (Test-Path $pwPkg)) {
+    Write-Host "  FATAL  playwright package not installed" -ForegroundColor Red
+    Write-Host "         Fix: cd '$SCRIPTS' && npm install" -ForegroundColor Yellow
+    Write-Host "`nPreflight failed — aborting test suite." -ForegroundColor Red
+    exit 1
+}
+Write-Host "  PASS  playwright npm package installed" -ForegroundColor Green
+
+$pwShell = Get-ChildItem "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-*\chrome-win\headless_shell.exe" `
+    -ErrorAction SilentlyContinue | Select-Object -Last 1   # last = newest installed version
+if (-not $pwShell) {
+    Write-Host "  FATAL  Playwright Chromium browser not installed" -ForegroundColor Red
+    Write-Host "         Fix: node '$pwCli' install chromium" -ForegroundColor Yellow
+    Write-Host "`nPreflight failed — aborting test suite." -ForegroundColor Red
+    exit 1
+}
+Write-Host "  PASS  Chromium headless_shell present  ($($pwShell.FullName))" -ForegroundColor Green
+
 # ── 1. Hook filtering ────────────────────────────────────────────────────────
 Write-Host "`n── 1. Hook filtering: non-UI files must be silent ────────────" -ForegroundColor Cyan
 

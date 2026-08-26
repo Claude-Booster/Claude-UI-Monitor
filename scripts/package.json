@@ -5,6 +5,7 @@
     "node": ">=18.0.0"
   },
   "scripts": {
+    "postinstall": "playwright install chromium",
     "snapshots": "playwright test --config playwright.config.js",
     "snapshots:update": "playwright test --config playwright.config.js --update-snapshots",
     "snapshots:report": "playwright show-report",
