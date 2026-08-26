@@ -67,10 +67,15 @@ if (-not $pwShell) {
 }
 Write-Host "  PASS  Chromium headless_shell present  ($($pwShell.FullName))" -ForegroundColor Green
 
+# Suppress weekly npm update inside ui-check.ps1 for the duration of this test run.
+# Each Invoke-Hook spawns ui-check.ps1 which would otherwise run `npm update playwright`
+# on its first invocation (triggering postinstall → playwright install chromium).
+$env:UI_MONITOR_SKIP_SYNC = "1"
+
 # ── 1. Hook filtering ────────────────────────────────────────────────────────
 Write-Host "`n── 1. Hook filtering: non-UI files must be silent ────────────" -ForegroundColor Cyan
 
-foreach ($case in @(
+$s1Cases = @(
     @{ File = "C:/p/src/routes/users.ts";          Label = "Backend route .ts" },
     @{ File = "C:/p/src/app.component.spec.ts";    Label = "Spec file" },
     @{ File = "C:/p/node_modules/lib/index.js";    Label = "node_modules" },
@@ -78,15 +83,24 @@ foreach ($case in @(
     @{ File = "C:/p/dist/main.js";                 Label = "dist/ output" },
     @{ File = "C:/p/something.config.ts";          Label = "Config file" },
     @{ File = "C:/p/src/middleware/auth.ts";        Label = "Middleware .ts" }
-)) {
-    $r = Invoke-Hook $case.File
-    Assert "$($case.Label) → silent" ($r.ExitCode -eq 0 -and -not $r.Output)
+)
+$s1Jobs = $s1Cases | ForEach-Object {
+    $c = $_
+    Start-ThreadJob -ScriptBlock {
+        $json = @{ tool_name = "Edit"; tool_input = @{ file_path = $using:c.File } } | ConvertTo-Json -Compress
+        $out  = $json | pwsh -NonInteractive -File $using:hook 2>$null
+        @{ Label = $using:c.Label; ExitCode = $LASTEXITCODE; Output = $out }
+    }
 }
+foreach ($r in ($s1Jobs | Wait-Job | Receive-Job)) {
+    Assert "$($r.Label)  silent" ($r.ExitCode -eq 0 -and -not $r.Output)
+}
+Remove-Job $s1Jobs -Force
 
 # ── 2. Hook filtering: UI files must not be filtered ────────────────────────
 Write-Host "`n── 2. Hook filtering: UI files must reach port-probe stage ───" -ForegroundColor Cyan
 
-foreach ($f in @(
+$s2Files = @(
     "C:/p/src/app/app.component.html",
     "C:/p/src/styles.scss",
     "C:/p/src/routes/+page.svelte",
@@ -96,10 +110,19 @@ foreach ($f in @(
     "C:/p/web_dashboard.py",
     "C:/p/agentpulse/scripts/demo.py",
     "C:/p/serve.py"
-)) {
-    $r = Invoke-Hook $f
-    Assert "Exits cleanly (no server): $(Split-Path $f -Leaf)" ($r.ExitCode -eq 0)
+)
+$s2Jobs = $s2Files | ForEach-Object {
+    $f = $_
+    Start-ThreadJob -ScriptBlock {
+        $json = @{ tool_name = "Edit"; tool_input = @{ file_path = $using:f } } | ConvertTo-Json -Compress
+        $out  = $json | pwsh -NonInteractive -File $using:hook 2>$null
+        @{ File = $using:f; ExitCode = $LASTEXITCODE; Output = $out }
+    }
 }
+foreach ($r in ($s2Jobs | Wait-Job | Receive-Job)) {
+    Assert "Exits cleanly (no server): $(Split-Path $r.File -Leaf)" ($r.ExitCode -eq 0)
+}
+Remove-Job $s2Jobs -Force
 
 # ── 3. Hook trigger with live server ────────────────────────────────────────
 Write-Host "`n── 3. Hook trigger output with simulated dev server ──────────" -ForegroundColor Cyan
@@ -157,9 +180,17 @@ Write-Host "`n── 6. MCP server process health ──────────
 # responded to the health check. It does NOT mean Claude can call browser_*
 # tools right now. Tools only appear in a NEW CHAT started after registration.
 
-$mcpOut = claude mcp list 2>&1
-Assert "playwright shows Connected"          ($mcpOut -match "playwright.*Connected")        "(got: $($mcpOut | Select-String 'playwright'))"
-Assert "chrome-devtools-mcp shows Connected" ($mcpOut -match "chrome-devtools-mcp.*Connected") "(got: $($mcpOut | Select-String 'chrome'))"
+$mcpTmp = [IO.Path]::GetTempFileName()
+$mcpProc = Start-Process -FilePath "claude" -ArgumentList "mcp", "list" `
+    -NoNewWindow -RedirectStandardOutput $mcpTmp -RedirectStandardError $null -PassThru
+$null = $mcpProc.WaitForExit(6000)   # 6 s cap — each server would otherwise wait 30 s
+if (-not $mcpProc.HasExited) { try { $mcpProc.Kill() } catch {} }
+$mcpOut = (Get-Content $mcpTmp -Raw -ErrorAction SilentlyContinue) ?? ""
+Remove-Item $mcpTmp -ErrorAction SilentlyContinue
+$pwLine  = ($mcpOut -split "`n" | Where-Object { $_ -match "playwright" }        | Select-Object -First 1)
+$cdpLine = ($mcpOut -split "`n" | Where-Object { $_ -match "chrome-devtools-mcp" } | Select-Object -First 1)
+Assert "playwright shows Connected"          ($mcpOut -match "playwright.*Connected")          "(got: $pwLine)"
+Assert "chrome-devtools-mcp shows Connected" ($mcpOut -match "chrome-devtools-mcp.*Connected") "(got: $cdpLine)"
 # Connected means the server process started. It does NOT mean tools are in
 # Claude's active tool list. Tools only load at the start of a new conversation.
 
@@ -767,38 +798,31 @@ if ((Test-Path $e2eScript) -and (Test-Path $nodeModPw)) {
 
     if ($t17Up) {
         $t17Url = "http://127.0.0.1:$t17Port"
-        # Kill any lingering Chrome before each real-URL call to avoid AV scan accumulation.
         Stop-Process -Name "chrome-headless-shell" -Force -ErrorAction SilentlyContinue
 
-        # Always-on fields on real URL
+        # One combined call: always-on fields + --dark-mode + --cwv (3 launches → 1)
         $t17rOut = "$env:USERPROFILE\.claude\ui-screenshots\test17-real.png"
-        $t17rRaw = Invoke-NodeTimeout @($e2eScript, $t17Url, $t17rOut, '1280', '800')
-        try { $t17rJson = $t17rRaw | ConvertFrom-Json -ErrorAction Stop } catch { $t17rJson = $null }
+        $t17AllRaw = Invoke-NodeTimeout @($e2eScript, $t17Url, $t17rOut, '1280', '800', '--dark-mode', '--cwv') -TimeoutMs 300000
+        try { $t17rJson = $t17AllRaw | ConvertFrom-Json -ErrorAction Stop } catch { $t17rJson = $null }
+
+        # Always-on fields
         Assert "real URL: meta field present"                    ($t17rJson -and $t17rJson.PSObject.Properties['meta'])           "(meta absent)"
         Assert "real URL: meta.issues is an array"               ($t17rJson -and $t17rJson.meta.issues -is [array])               "(got: $($t17rJson.meta.issues))"
         Assert "real URL: images field present"                  ($t17rJson -and $t17rJson.PSObject.Properties['images'])
         Assert "real URL: images.total is a number"              ($t17rJson -and $null -ne $t17rJson.images.total)               "(got: $($t17rJson.images.total))"
         Assert "real URL: bundle field present"                  ($t17rJson -and $t17rJson.PSObject.Properties['bundle'])
-        Assert "real URL: bundle.totalTransferKB present"       ($t17rJson -and $null -ne $t17rJson.bundle.totalTransferKB)      "(got: $($t17rJson.bundle.totalTransferKB))"
+        Assert "real URL: bundle.totalTransferKB present"        ($t17rJson -and $null -ne $t17rJson.bundle.totalTransferKB)     "(got: $($t17rJson.bundle.totalTransferKB))"
         Assert "real URL: fonts field present"                   ($t17rJson -and $t17rJson.PSObject.Properties['fonts'])
         Assert "real URL: fonts.loaded is a number"              ($t17rJson -and $null -ne $t17rJson.fonts.loaded)               "(got: $($t17rJson.fonts.loaded))"
 
-        # Dark mode — kill stale Chrome first to avoid memory accumulation
-        Stop-Process -Name "chrome-headless-shell" -Force -ErrorAction SilentlyContinue
-        $t17dkOut = "$env:USERPROFILE\.claude\ui-screenshots\test17-dark.png"
-        $t17dkRaw = Invoke-NodeTimeout @($e2eScript, $t17Url, $t17dkOut, '1280', '800', '--dark-mode')
-        try { $t17dkJson = $t17dkRaw | ConvertFrom-Json -ErrorAction Stop } catch { $t17dkJson = $null }
-        Assert "--dark-mode: JSON has 'darkMode' field"          ($t17dkJson -and $t17dkJson.PSObject.Properties['darkMode'])    "(got: $t17dkRaw)"
-        Assert "--dark-mode: -dark.png file created on disk"     ($t17dkJson -and (Test-Path ($t17dkJson.darkMode.out ?? 'NONE'))) "(path: $($t17dkJson.darkMode.out))"
+        # --dark-mode (same JSON object)
+        Assert "--dark-mode: JSON has 'darkMode' field"          ($t17rJson -and $t17rJson.PSObject.Properties['darkMode'])      "(got: $t17AllRaw)"
+        Assert "--dark-mode: -dark.png file created on disk"     ($t17rJson -and (Test-Path ($t17rJson.darkMode.out ?? 'NONE'))) "(path: $($t17rJson.darkMode.out))"
 
-        # CWV — kill stale Chrome first
-        Stop-Process -Name "chrome-headless-shell" -Force -ErrorAction SilentlyContinue
-        $t17cwvOut = "$env:USERPROFILE\.claude\ui-screenshots\test17-cwv.png"
-        $t17cwvRaw = Invoke-NodeTimeout @($e2eScript, $t17Url, $t17cwvOut, '1280', '800', '--cwv')
-        try { $t17cwvJson = $t17cwvRaw | ConvertFrom-Json -ErrorAction Stop } catch { $t17cwvJson = $null }
-        Assert "--cwv: JSON has 'cwv' field"                     ($t17cwvJson -and $t17cwvJson.PSObject.Properties['cwv'])       "(got: $t17cwvRaw)"
-        Assert "--cwv: cwv.ratings object present"               ($t17cwvJson -and $null -ne $t17cwvJson.cwv.ratings)           "(got: $($t17cwvJson.cwv))"
-        Assert "--cwv: cwv.cls is defined (0 or more)"          ($t17cwvJson -and $null -ne $t17cwvJson.cwv.cls)                "(got: $($t17cwvJson.cwv.cls))"
+        # --cwv (same JSON object)
+        Assert "--cwv: JSON has 'cwv' field"                     ($t17rJson -and $t17rJson.PSObject.Properties['cwv'])           "(got: $t17AllRaw)"
+        Assert "--cwv: cwv.ratings object present"               ($t17rJson -and $null -ne $t17rJson.cwv.ratings)               "(got: $($t17rJson.cwv))"
+        Assert "--cwv: cwv.cls is defined (0 or more)"           ($t17rJson -and $null -ne $t17rJson.cwv.cls)                   "(got: $($t17rJson.cwv.cls))"
 
         if ($t17Proc) { try { Stop-Process -Id $t17Proc.Id -Force -ErrorAction SilentlyContinue } catch {} }
         Remove-Item $t17Dir -Recurse -Force -ErrorAction SilentlyContinue
@@ -897,11 +921,24 @@ if ((Test-Path $e2eScript18) -and (Test-Path $nm18)) {
 
     $t18Url = "http://127.0.0.1:$t18Port/"
 
-    # Basic real-URL: scripts + touchTargets always-on
-    $ss18 = "$env:TEMP\s18-real.png"
-    $r18  = Invoke-NodeTimeout @($e2eScript18, $t18Url, $ss18, '1280', '800')
+    Stop-Process -Name "chrome-headless-shell" -Force -ErrorAction SilentlyContinue
+
+    # about:blank — verify real-URL-only fields are absent
+    $ss18Blank = "$env:TEMP\s18-blank.png"
+    $r18Blank  = Invoke-NodeTimeout @($e2eScript18, 'about:blank', $ss18Blank, '400', '300')
+    try { $j18Blank = $r18Blank | ConvertFrom-Json } catch { $j18Blank = $null }
+    Assert "about:blank: scripts absent (real-URL-only)"       (-not $j18Blank.PSObject.Properties['scripts'])
+    Assert "about:blank: touchTargets absent (real-URL-only)"  (-not $j18Blank.PSObject.Properties['touchTargets'])
+
+    Stop-Process -Name "chrome-headless-shell" -Force -ErrorAction SilentlyContinue
+
+    # One combined real-URL call — all flags at once (8 separate calls → 1 Chrome launch)
+    $ss18 = "$env:TEMP\s18-combined.png"
+    $r18  = Invoke-NodeTimeout @($e2eScript18, $t18Url, $ss18, '1280', '800',
+        '--cwv', '--dark-mode', '--reduced-motion', '--forced-colors', '--print', '--no-js', '--focus-audit') -TimeoutMs 300000
     try { $j18 = $r18 | ConvertFrom-Json } catch { $j18 = $null }
 
+    # Always-on: scripts + touchTargets
     Assert "real URL s18: scripts field present"                        ($j18 -and $j18.PSObject.Properties['scripts'])
     Assert "real URL s18: scripts.thirdPartyCount is a number"         ($j18 -and $j18.scripts.PSObject.Properties['thirdPartyCount'])
     Assert "real URL s18: scripts.warnings is an array"                ($j18 -and $j18.scripts.PSObject.Properties['warnings'])
@@ -910,62 +947,42 @@ if ((Test-Path $e2eScript18) -and (Test-Path $nm18)) {
     Assert "real URL s18: meta.blocksZoom is defined"                  ($j18 -and $j18.meta.PSObject.Properties['blocksZoom'])
     Assert "real URL s18: images.lazyAboveFold is a number"            ($j18 -and $j18.images.PSObject.Properties['lazyAboveFold'])
     Assert "real URL s18: images.missingFetchPriority is a number"     ($j18 -and $j18.images.PSObject.Properties['missingFetchPriority'])
-    # --cwv: TBT + CLS sources
-    $ss18Cwv = "$env:TEMP\s18-cwv.png"
-    $r18Cwv  = Invoke-NodeTimeout @($e2eScript18, $t18Url, $ss18Cwv, '1280', '800', '--cwv')
-    try { $j18Cwv = $r18Cwv | ConvertFrom-Json } catch { $j18Cwv = $null }
-    Assert "--cwv s18: cwv.tbt is defined"           ($j18Cwv -and $j18Cwv.cwv.PSObject.Properties['tbt'])
-    Assert "--cwv s18: cwv.tbt is non-negative"      ($j18Cwv -and $null -ne $j18Cwv.cwv.tbt -and $j18Cwv.cwv.tbt -ge 0)
-    Assert "--cwv s18: cwv.clsSources is an array"   ($j18Cwv -and $j18Cwv.cwv.PSObject.Properties['clsSources'])
-    Assert "--cwv s18: cwv.longTasks is an array"    ($j18Cwv -and $j18Cwv.cwv.PSObject.Properties['longTasks'])
-    Assert "--cwv s18: cwv.ratings.tbt present"      ($j18Cwv -and $j18Cwv.cwv.ratings.PSObject.Properties['tbt'])
 
-    # --dark-mode: darkModeA11y field present
-    $ss18Dm = "$env:TEMP\s18-dark.png"
-    $r18Dm  = Invoke-NodeTimeout @($e2eScript18, $t18Url, $ss18Dm, '1280', '800', '--dark-mode')
-    try { $j18Dm = $r18Dm | ConvertFrom-Json } catch { $j18Dm = $null }
-    Assert "--dark-mode s18: darkMode field present"       ($j18Dm -and $j18Dm.PSObject.Properties['darkMode'])
-    Assert "--dark-mode s18: darkModeA11y field present"   ($j18Dm -and $j18Dm.PSObject.Properties['darkModeA11y'])
-    Assert "--dark-mode s18: darkModeA11y.violations >= 0" ($j18Dm -and $j18Dm.darkModeA11y.PSObject.Properties['violations'])
+    # --cwv
+    Assert "--cwv s18: cwv.tbt is defined"           ($j18 -and $j18.cwv.PSObject.Properties['tbt'])
+    Assert "--cwv s18: cwv.tbt is non-negative"      ($j18 -and $null -ne $j18.cwv.tbt -and $j18.cwv.tbt -ge 0)
+    Assert "--cwv s18: cwv.clsSources is an array"   ($j18 -and $j18.cwv.PSObject.Properties['clsSources'])
+    Assert "--cwv s18: cwv.longTasks is an array"    ($j18 -and $j18.cwv.PSObject.Properties['longTasks'])
+    Assert "--cwv s18: cwv.ratings.tbt present"      ($j18 -and $j18.cwv.ratings.PSObject.Properties['tbt'])
+
+    # --dark-mode
+    Assert "--dark-mode s18: darkMode field present"       ($j18 -and $j18.PSObject.Properties['darkMode'])
+    Assert "--dark-mode s18: darkModeA11y field present"   ($j18 -and $j18.PSObject.Properties['darkModeA11y'])
+    Assert "--dark-mode s18: darkModeA11y.violations >= 0" ($j18 -and $j18.darkModeA11y.PSObject.Properties['violations'])
 
     # --reduced-motion
-    $ss18Rm = "$env:TEMP\s18-rm.png"
-    $r18Rm  = Invoke-NodeTimeout @($e2eScript18, $t18Url, $ss18Rm, '1280', '800', '--reduced-motion')
-    try { $j18Rm = $r18Rm | ConvertFrom-Json } catch { $j18Rm = $null }
-    Assert "--reduced-motion: reducedMotion field present"      ($j18Rm -and $j18Rm.PSObject.Properties['reducedMotion'])
-    Assert "--reduced-motion: -reduced-motion.png file created" (Test-Path "$env:TEMP\s18-rm-reduced-motion.png")
+    Assert "--reduced-motion: reducedMotion field present"      ($j18 -and $j18.PSObject.Properties['reducedMotion'])
+    Assert "--reduced-motion: -reduced-motion.png file created" (Test-Path "$env:TEMP\s18-combined-reduced-motion.png")
 
     # --forced-colors
-    $ss18Fc = "$env:TEMP\s18-fc.png"
-    $r18Fc  = Invoke-NodeTimeout @($e2eScript18, $t18Url, $ss18Fc, '1280', '800', '--forced-colors')
-    try { $j18Fc = $r18Fc | ConvertFrom-Json } catch { $j18Fc = $null }
-    Assert "--forced-colors: forcedColors field present"       ($j18Fc -and $j18Fc.PSObject.Properties['forcedColors'])
-    Assert "--forced-colors: -forced-colors.png file created"  (Test-Path "$env:TEMP\s18-fc-forced-colors.png")
+    Assert "--forced-colors: forcedColors field present"       ($j18 -and $j18.PSObject.Properties['forcedColors'])
+    Assert "--forced-colors: -forced-colors.png file created"  (Test-Path "$env:TEMP\s18-combined-forced-colors.png")
 
     # --print
-    $ss18Pr = "$env:TEMP\s18-pr.png"
-    $r18Pr  = Invoke-NodeTimeout @($e2eScript18, $t18Url, $ss18Pr, '1280', '800', '--print')
-    try { $j18Pr = $r18Pr | ConvertFrom-Json } catch { $j18Pr = $null }
-    Assert "--print: print field present"           ($j18Pr -and $j18Pr.PSObject.Properties['print'])
-    Assert "--print: -print.png file created"       (Test-Path "$env:TEMP\s18-pr-print.png")
+    Assert "--print: print field present"           ($j18 -and $j18.PSObject.Properties['print'])
+    Assert "--print: -print.png file created"       (Test-Path "$env:TEMP\s18-combined-print.png")
 
     # --no-js
-    $ss18Nj = "$env:TEMP\s18-nj.png"
-    $r18Nj  = Invoke-NodeTimeout @($e2eScript18, $t18Url, $ss18Nj, '1280', '800', '--no-js')
-    try { $j18Nj = $r18Nj | ConvertFrom-Json } catch { $j18Nj = $null }
-    Assert "--no-js: noJs field present"              ($j18Nj -and $j18Nj.PSObject.Properties['noJs'])
-    Assert "--no-js: noJs.hasContent is boolean"      ($j18Nj -and $j18Nj.noJs.PSObject.Properties['hasContent'])
-    Assert "--no-js: -no-js.png file created"         (Test-Path "$env:TEMP\s18-nj-no-js.png")
+    Assert "--no-js: noJs field present"              ($j18 -and $j18.PSObject.Properties['noJs'])
+    Assert "--no-js: noJs.hasContent is boolean"      ($j18 -and $j18.noJs.PSObject.Properties['hasContent'])
+    Assert "--no-js: -no-js.png file created"         (Test-Path "$env:TEMP\s18-combined-no-js.png")
 
     # --focus-audit
-    $ss18Fa = "$env:TEMP\s18-fa.png"
-    $r18Fa  = Invoke-NodeTimeout @($e2eScript18, $t18Url, $ss18Fa, '1280', '800', '--focus-audit')
-    try { $j18Fa = $r18Fa | ConvertFrom-Json } catch { $j18Fa = $null }
-    Assert "--focus-audit: focusAudit field present"            ($j18Fa -and $j18Fa.PSObject.Properties['focusAudit'])
-    Assert "--focus-audit: focusAudit.tabStopsTested >= 0"      ($j18Fa -and $j18Fa.focusAudit.PSObject.Properties['tabStopsTested'])
-    Assert "--focus-audit: focusAudit.missingFocusRing >= 0"    ($j18Fa -and $j18Fa.focusAudit.PSObject.Properties['missingFocusRing'])
-    Assert "--focus-audit: focusAudit.focusRingPct 0-100"       ($j18Fa -and $j18Fa.focusAudit.focusRingPct -ge 0 -and $j18Fa.focusAudit.focusRingPct -le 100)
-    Assert "--focus-audit: focusAudit.warnings is an array"     ($j18Fa -and $j18Fa.focusAudit.PSObject.Properties['warnings'])
+    Assert "--focus-audit: focusAudit field present"            ($j18 -and $j18.PSObject.Properties['focusAudit'])
+    Assert "--focus-audit: focusAudit.tabStopsTested >= 0"      ($j18 -and $j18.focusAudit.PSObject.Properties['tabStopsTested'])
+    Assert "--focus-audit: focusAudit.missingFocusRing >= 0"    ($j18 -and $j18.focusAudit.PSObject.Properties['missingFocusRing'])
+    Assert "--focus-audit: focusAudit.focusRingPct 0-100"       ($j18 -and $j18.focusAudit.focusRingPct -ge 0 -and $j18.focusAudit.focusRingPct -le 100)
+    Assert "--focus-audit: focusAudit.warnings is an array"     ($j18 -and $j18.focusAudit.PSObject.Properties['warnings'])
 
     # Cleanup
     if ($t18Job) {
@@ -1058,29 +1075,35 @@ if ((Test-Path $e2eScript19) -and (Test-Path $nm19)) {
     Start-Sleep 2
 
     $t19Url = "http://127.0.0.1:$t19Port/"
+    Stop-Process -Name "chrome-headless-shell" -Force -ErrorAction SilentlyContinue
 
-    $ss19 = "$env:TEMP\s19-real.png"
-    $r19  = Invoke-NodeTimeout @($e2eScript19, $t19Url, $ss19, '1280', '800')
+    # One combined call — base always-on fields + all flags (6 launches → 1)
+    $ss19 = "$env:TEMP\s19-combined.png"
+    $r19  = Invoke-NodeTimeout @($e2eScript19, $t19Url, $ss19, '1280', '800',
+        '--link-check', '--reflow', '--text-spacing', '--paint-complexity', '--state-contrast') -TimeoutMs 300000
     try { $j19 = $r19 | ConvertFrom-Json } catch { $j19 = $null }
 
-    # Existing always-on fields
+    # headings
     Assert "real URL s19: headings field present"                ($j19 -and $j19.PSObject.Properties['headings'])
     Assert "real URL s19: headings.h1Count >= 1"                 ($j19 -and $j19.headings.h1Count -ge 1)
     Assert "real URL s19: headings.skips is an array"            ($j19 -and $j19.headings.PSObject.Properties['skips'])
     Assert "real URL s19: headings detects h2->h4 skip"          ($j19 -and $j19.headings.skips.Count -ge 1)
     Assert "real URL s19: headings.warnings is an array"         ($j19 -and $j19.headings.PSObject.Properties['warnings'])
 
+    # domA11y
     Assert "real URL s19: domA11y field present"                 ($j19 -and $j19.PSObject.Properties['domA11y'])
     Assert "real URL s19: domA11y.brokenAriaRefs is an array"    ($j19 -and $j19.domA11y.PSObject.Properties['brokenAriaRefs'])
     Assert "real URL s19: domA11y.unlabeledInputs >= 1"          ($j19 -and $j19.domA11y.unlabeledInputs -ge 1)
     Assert "real URL s19: domA11y.warnings is an array"          ($j19 -and $j19.domA11y.PSObject.Properties['warnings'])
 
+    # layout
     Assert "real URL s19: layout field present"                  ($j19 -and $j19.PSObject.Properties['layout'])
     Assert "real URL s19: layout.hasHorizontalScroll is bool"    ($j19 -and $j19.layout.PSObject.Properties['hasHorizontalScroll'])
     Assert "real URL s19: layout.wideElements is an array"       ($j19 -and $j19.layout.PSObject.Properties['wideElements'])
     Assert "real URL s19: layout.hiddenOverflowElements present" ($j19 -and $j19.layout.PSObject.Properties['hiddenOverflowElements'])
     Assert "real URL s19: layout detects overflow-hidden clip"   ($j19 -and $j19.layout.hiddenOverflowElements.Count -ge 1)
 
+    # meta
     Assert "real URL s19: meta.lang is 'en'"                     ($j19 -and $j19.meta.lang -eq 'en')
     Assert "real URL s19: meta.charset present"                  ($j19 -and $j19.meta.PSObject.Properties['charset'])
     Assert "real URL s19: images.missingSrcset >= 0"             ($j19 -and $j19.images.PSObject.Properties['missingSrcset'])
@@ -1137,50 +1160,35 @@ if ((Test-Path $e2eScript19) -and (Test-Path $nm19)) {
     Assert "real URL s19: stacking.veryHighZIndex is array"      ($j19 -and $j19.stacking.PSObject.Properties['veryHighZIndex'])
     Assert "real URL s19: stacking.warnings is an array"         ($j19 -and $j19.stacking.PSObject.Properties['warnings'])
 
-    # --link-check
-    $ss19Lc = "$env:TEMP\s19-lc.png"
-    $r19Lc  = Invoke-NodeTimeout @($e2eScript19, $t19Url, $ss19Lc, 1280, 800, '--link-check')
-    try { $j19Lc = $r19Lc | ConvertFrom-Json } catch { $j19Lc = $null }
-    Assert "--link-check: linkCheck field present"     ($j19Lc -and $j19Lc.PSObject.Properties['linkCheck'])
-    Assert "--link-check: linkCheck.checked >= 0"      ($j19Lc -and $j19Lc.linkCheck.PSObject.Properties['checked'])
-    Assert "--link-check: linkCheck.broken >= 0"       ($j19Lc -and $j19Lc.linkCheck.PSObject.Properties['broken'])
-    Assert "--link-check: linkCheck.warnings is array" ($j19Lc -and $j19Lc.linkCheck.PSObject.Properties['warnings'])
+    # --link-check (same JSON)
+    Assert "--link-check: linkCheck field present"     ($j19 -and $j19.PSObject.Properties['linkCheck'])
+    Assert "--link-check: linkCheck.checked >= 0"      ($j19 -and $j19.linkCheck.PSObject.Properties['checked'])
+    Assert "--link-check: linkCheck.broken >= 0"       ($j19 -and $j19.linkCheck.PSObject.Properties['broken'])
+    Assert "--link-check: linkCheck.warnings is array" ($j19 -and $j19.linkCheck.PSObject.Properties['warnings'])
 
-    # --reflow
-    $ss19Rf = "$env:TEMP\s19-rf.png"
-    $r19Rf  = Invoke-NodeTimeout @($e2eScript19, $t19Url, $ss19Rf, 1280, 800, '--reflow')
-    try { $j19Rf = $r19Rf | ConvertFrom-Json } catch { $j19Rf = $null }
-    Assert "--reflow: reflow field present"                     ($j19Rf -and $j19Rf.PSObject.Properties['reflow'])
-    Assert "--reflow: reflow.hasHorizontalScrollAt320px bool"   ($j19Rf -and $j19Rf.reflow.PSObject.Properties['hasHorizontalScrollAt320px'])
-    Assert "--reflow: reflow.wideElements is array"             ($j19Rf -and $j19Rf.reflow.PSObject.Properties['wideElements'])
-    Assert "--reflow: reflow.warnings is array"                 ($j19Rf -and $j19Rf.reflow.PSObject.Properties['warnings'])
-    Assert "--reflow: -reflow-320px.png file created"           (Test-Path "$env:TEMP\s19-rf-reflow-320px.png")
+    # --reflow (same JSON)
+    Assert "--reflow: reflow field present"                     ($j19 -and $j19.PSObject.Properties['reflow'])
+    Assert "--reflow: reflow.hasHorizontalScrollAt320px bool"   ($j19 -and $j19.reflow.PSObject.Properties['hasHorizontalScrollAt320px'])
+    Assert "--reflow: reflow.wideElements is array"             ($j19 -and $j19.reflow.PSObject.Properties['wideElements'])
+    Assert "--reflow: reflow.warnings is array"                 ($j19 -and $j19.reflow.PSObject.Properties['warnings'])
+    Assert "--reflow: -reflow-320px.png file created"           (Test-Path "$env:TEMP\s19-combined-reflow-320px.png")
 
-    # --text-spacing
-    $ss19Ts = "$env:TEMP\s19-ts.png"
-    $r19Ts  = Invoke-NodeTimeout @($e2eScript19, $t19Url, $ss19Ts, 1280, 800, '--text-spacing')
-    try { $j19Ts = $r19Ts | ConvertFrom-Json } catch { $j19Ts = $null }
-    Assert "--text-spacing: textSpacing field present"          ($j19Ts -and $j19Ts.PSObject.Properties['textSpacing'])
-    Assert "--text-spacing: textSpacing.clippedElements array"  ($j19Ts -and $j19Ts.textSpacing.PSObject.Properties['clippedElements'])
-    Assert "--text-spacing: textSpacing.warnings is array"      ($j19Ts -and $j19Ts.textSpacing.PSObject.Properties['warnings'])
-    Assert "--text-spacing: -text-spacing.png file created"     (Test-Path "$env:TEMP\s19-ts-text-spacing.png")
+    # --text-spacing (same JSON)
+    Assert "--text-spacing: textSpacing field present"          ($j19 -and $j19.PSObject.Properties['textSpacing'])
+    Assert "--text-spacing: textSpacing.clippedElements array"  ($j19 -and $j19.textSpacing.PSObject.Properties['clippedElements'])
+    Assert "--text-spacing: textSpacing.warnings is array"      ($j19 -and $j19.textSpacing.PSObject.Properties['warnings'])
+    Assert "--text-spacing: -text-spacing.png file created"     (Test-Path "$env:TEMP\s19-combined-text-spacing.png")
 
-    # --paint-complexity
-    $ss19Pc = "$env:TEMP\s19-pc.png"
-    $r19Pc  = Invoke-NodeTimeout @($e2eScript19, $t19Url, $ss19Pc, 1280, 800, '--paint-complexity')
-    try { $j19Pc = $r19Pc | ConvertFrom-Json } catch { $j19Pc = $null }
-    Assert "--paint-complexity: paintComplexity field present"           ($j19Pc -and $j19Pc.PSObject.Properties['paintComplexity'])
-    Assert "--paint-complexity: expensiveProperties is array"            ($j19Pc -and $j19Pc.paintComplexity.PSObject.Properties['expensiveProperties'])
-    Assert "--paint-complexity: paintComplexity.warnings is array"       ($j19Pc -and $j19Pc.paintComplexity.PSObject.Properties['warnings'])
+    # --paint-complexity (same JSON)
+    Assert "--paint-complexity: paintComplexity field present"           ($j19 -and $j19.PSObject.Properties['paintComplexity'])
+    Assert "--paint-complexity: expensiveProperties is array"            ($j19 -and $j19.paintComplexity.PSObject.Properties['expensiveProperties'])
+    Assert "--paint-complexity: paintComplexity.warnings is array"       ($j19 -and $j19.paintComplexity.PSObject.Properties['warnings'])
 
-    # --state-contrast
-    $ss19Sc = "$env:TEMP\s19-sc.png"
-    $r19Sc  = Invoke-NodeTimeout @($e2eScript19, $t19Url, $ss19Sc, 1280, 800, '--state-contrast')
-    try { $j19Sc = $r19Sc | ConvertFrom-Json } catch { $j19Sc = $null }
-    Assert "--state-contrast: stateContrast field present"               ($j19Sc -and $j19Sc.PSObject.Properties['stateContrast'])
-    Assert "--state-contrast: stateContrast.checked >= 0"                ($j19Sc -and $j19Sc.stateContrast.PSObject.Properties['checked'])
-    Assert "--state-contrast: stateContrast.lowContrast >= 0"            ($j19Sc -and $j19Sc.stateContrast.PSObject.Properties['lowContrast'])
-    Assert "--state-contrast: stateContrast.warnings is array"           ($j19Sc -and $j19Sc.stateContrast.PSObject.Properties['warnings'])
+    # --state-contrast (same JSON)
+    Assert "--state-contrast: stateContrast field present"               ($j19 -and $j19.PSObject.Properties['stateContrast'])
+    Assert "--state-contrast: stateContrast.checked >= 0"                ($j19 -and $j19.stateContrast.PSObject.Properties['checked'])
+    Assert "--state-contrast: stateContrast.lowContrast >= 0"            ($j19 -and $j19.stateContrast.PSObject.Properties['lowContrast'])
+    Assert "--state-contrast: stateContrast.warnings is array"           ($j19 -and $j19.stateContrast.PSObject.Properties['warnings'])
 
     if ($t19Proc) {
         try { Stop-Process -Id $t19Proc.Id -Force -ErrorAction SilentlyContinue } catch {}
@@ -1275,9 +1283,12 @@ if ((Test-Path $e2eScript20) -and (Test-Path $nm20)) {
     Start-Sleep 2
 
     $t20Url = "http://127.0.0.1:$t20Port/"
+    Stop-Process -Name "chrome-headless-shell" -Force -ErrorAction SilentlyContinue
 
-    $ss20 = "$env:TEMP\s20-real.png"
-    $r20  = Invoke-NodeTimeout @($e2eScript20, $t20Url, $ss20, '1280', '800')
+    # One combined call — base always-on fields + all flags (4 launches → 1)
+    $ss20 = "$env:TEMP\s20-combined.png"
+    $r20  = Invoke-NodeTimeout @($e2eScript20, $t20Url, $ss20, '1280', '800',
+        '--required-fields', '--animation-fill', '--empty-states') -TimeoutMs 300000
     try { $j20 = $r20 | ConvertFrom-Json } catch { $j20 = $null }
 
     # svgA11y
@@ -1329,7 +1340,7 @@ if ((Test-Path $e2eScript20) -and (Test-Path $nm20)) {
     Assert "real URL s20: animationDurations.infiniteAnimations array" ($j20 -and $j20.animationDurations.PSObject.Properties['infiniteAnimations'])
     Assert "real URL s20: infiniteAnimations.Count >= 1"     ($j20 -and $j20.animationDurations.infiniteAnimations.Count -ge 1)
 
-    # animationDurations.wcag222Violations (finite animations with total duration > 5s)
+    # animationDurations.wcag222Violations
     Assert "real URL s20: animationDurations.wcag222Violations field present" ($j20 -and $j20.animationDurations.PSObject.Properties['wcag222Violations'])
     Assert "real URL s20: wcag222Violations.Count >= 1 (.long-finite is 3s*3=9s)" ($j20 -and $j20.animationDurations.wcag222Violations.Count -ge 1)
 
@@ -1337,31 +1348,22 @@ if ((Test-Path $e2eScript20) -and (Test-Path $nm20)) {
     Assert "real URL s20: cursor.pointerEventsNone is number" ($j20 -and $j20.cursor.PSObject.Properties['pointerEventsNone'])
     Assert "real URL s20: cursor.pointerEventsNone >= 1"      ($j20 -and $j20.cursor.pointerEventsNone -ge 1)
 
-    # --required-fields
-    $ss20Rf = "$env:TEMP\s20-rf.png"
-    $r20Rf  = Invoke-NodeTimeout @($e2eScript20, $t20Url, $ss20Rf, '1280', '800', '--required-fields')
-    try { $j20Rf = $r20Rf | ConvertFrom-Json } catch { $j20Rf = $null }
-    Assert "--required-fields: requiredFields field present"           ($j20Rf -and $j20Rf.PSObject.Properties['requiredFields'])
-    Assert "--required-fields: requiredFields.count >= 1"              ($j20Rf -and $j20Rf.requiredFields.count -ge 1)
-    Assert "--required-fields: missingAriaRequired is array"           ($j20Rf -and $j20Rf.requiredFields.PSObject.Properties['missingAriaRequired'])
-    Assert "--required-fields: missingAriaRequired.Count >= 1"         ($j20Rf -and $j20Rf.requiredFields.missingAriaRequired.Count -ge 1)
+    # --required-fields (same JSON)
+    Assert "--required-fields: requiredFields field present"           ($j20 -and $j20.PSObject.Properties['requiredFields'])
+    Assert "--required-fields: requiredFields.count >= 1"              ($j20 -and $j20.requiredFields.count -ge 1)
+    Assert "--required-fields: missingAriaRequired is array"           ($j20 -and $j20.requiredFields.PSObject.Properties['missingAriaRequired'])
+    Assert "--required-fields: missingAriaRequired.Count >= 1"         ($j20 -and $j20.requiredFields.missingAriaRequired.Count -ge 1)
 
-    # --animation-fill
-    $ss20Af = "$env:TEMP\s20-af.png"
-    $r20Af  = Invoke-NodeTimeout @($e2eScript20, $t20Url, $ss20Af, '1280', '800', '--animation-fill')
-    try { $j20Af = $r20Af | ConvertFrom-Json } catch { $j20Af = $null }
-    Assert "--animation-fill: missingFillMode field in animationDurations" ($j20Af -and $j20Af.animationDurations.PSObject.Properties['missingFillMode'])
-    Assert "--animation-fill: missingFillMode is array"                ($j20Af -and $j20Af.animationDurations.missingFillMode -is [array])
-    Assert "--animation-fill: missingFillMode.Count >= 1"              ($j20Af -and $j20Af.animationDurations.missingFillMode.Count -ge 1)
+    # --animation-fill (same JSON)
+    Assert "--animation-fill: missingFillMode field in animationDurations" ($j20 -and $j20.animationDurations.PSObject.Properties['missingFillMode'])
+    Assert "--animation-fill: missingFillMode is array"                ($j20 -and $j20.animationDurations.missingFillMode -is [array])
+    Assert "--animation-fill: missingFillMode.Count >= 1"              ($j20 -and $j20.animationDurations.missingFillMode.Count -ge 1)
 
-    # --empty-states
-    $ss20Es = "$env:TEMP\s20-es.png"
-    $r20Es  = Invoke-NodeTimeout @($e2eScript20, $t20Url, $ss20Es, '1280', '800', '--empty-states')
-    try { $j20Es = $r20Es | ConvertFrom-Json } catch { $j20Es = $null }
-    Assert "--empty-states: emptyStates field present"                 ($j20Es -and $j20Es.PSObject.Properties['emptyStates'])
-    Assert "--empty-states: emptyStates.spinners is array"             ($j20Es -and $j20Es.emptyStates.PSObject.Properties['spinners'])
-    Assert "--empty-states: emptyStates.emptyContainers is array"      ($j20Es -and $j20Es.emptyStates.PSObject.Properties['emptyContainers'])
-    Assert "--empty-states: spinners or emptyContainers detected"      ($j20Es -and ($j20Es.emptyStates.spinners.Count -ge 1 -or $j20Es.emptyStates.emptyContainers.Count -ge 1))
+    # --empty-states (same JSON)
+    Assert "--empty-states: emptyStates field present"                 ($j20 -and $j20.PSObject.Properties['emptyStates'])
+    Assert "--empty-states: emptyStates.spinners is array"             ($j20 -and $j20.emptyStates.PSObject.Properties['spinners'])
+    Assert "--empty-states: emptyStates.emptyContainers is array"      ($j20 -and $j20.emptyStates.PSObject.Properties['emptyContainers'])
+    Assert "--empty-states: spinners or emptyContainers detected"      ($j20 -and ($j20.emptyStates.spinners.Count -ge 1 -or $j20.emptyStates.emptyContainers.Count -ge 1))
 
     if ($t20Proc) {
         try { Stop-Process -Id $t20Proc.Id -Force -ErrorAction SilentlyContinue } catch {}

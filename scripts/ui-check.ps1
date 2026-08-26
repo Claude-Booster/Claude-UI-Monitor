@@ -51,17 +51,20 @@ if (-not (Test-Path "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-*\c
     }
 }
 # Weekly drift check: keeps scripts/node_modules in sync with the latest npx/MCP version
-$pwSentinel = "$env:USERPROFILE\.claude\.pw-drift-check"
-$needsSync = -not (Test-Path $pwSentinel) -or
-             ((Get-Date) - (Get-Item $pwSentinel -ErrorAction SilentlyContinue).LastWriteTime).TotalDays -gt 7
-if ($needsSync -and (Test-Path $scriptsDir)) {
-    Push-Location $scriptsDir
-    try {
-        npm update playwright @playwright/test 2>&1 | Out-Null
-        npx playwright install chromium 2>&1 | Out-Null
-    } catch {}
-    Pop-Location
-    Set-Content $pwSentinel (Get-Date -Format 'o') -ErrorAction SilentlyContinue
+# Skipped when UI_MONITOR_SKIP_SYNC=1 (set by test suite to prevent npm calls during testing)
+if (-not $env:UI_MONITOR_SKIP_SYNC) {
+    $pwSentinel = "$env:USERPROFILE\.claude\.pw-drift-check"
+    $needsSync = -not (Test-Path $pwSentinel) -or
+                 ((Get-Date) - (Get-Item $pwSentinel -ErrorAction SilentlyContinue).LastWriteTime).TotalDays -gt 7
+    if ($needsSync -and (Test-Path $scriptsDir)) {
+        Push-Location $scriptsDir
+        try {
+            npm update playwright @playwright/test 2>&1 | Out-Null
+            npx playwright install chromium 2>&1 | Out-Null
+        } catch {}
+        Pop-Location
+        Set-Content $pwSentinel (Get-Date -Format 'o') -ErrorAction SilentlyContinue
+    }
 }
 
 # ── Detect running dev server ─────────────────────────────────────────────────
