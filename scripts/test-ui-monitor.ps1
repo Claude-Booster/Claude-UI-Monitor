@@ -57,7 +57,7 @@ if (-not (Test-Path $pwPkg)) {
 }
 Write-Host "  PASS  playwright npm package installed" -ForegroundColor Green
 
-$pwShell = Get-ChildItem "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-*\chrome-win\headless_shell.exe" `
+$pwShell = Get-ChildItem "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-*\chrome-headless-shell-win64\chrome-headless-shell.exe" `
     -ErrorAction SilentlyContinue | Select-Object -Last 1   # last = newest installed version
 if (-not $pwShell) {
     Write-Host "  FATAL  Playwright Chromium browser not installed" -ForegroundColor Red

@@ -43,7 +43,7 @@ if ($ext -in @('.css', '.scss', '.sass', '.less')) {
 # ── Playwright pre-flight: browser binaries + weekly package sync ─────────────
 $scriptsDir = $PSScriptRoot   # same directory as ui-check.ps1
 # Ensure chromium binaries exist (installs only when absent — fast no-op otherwise)
-if (-not (Test-Path "$env:LOCALAPPDATA\ms-playwright\chromium-*")) {
+if (-not (Test-Path "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-*\chrome-headless-shell-win64\chrome-headless-shell.exe")) {
     if (Test-Path $scriptsDir) {
         Push-Location $scriptsDir
         try { npx playwright install chromium 2>&1 | Out-Null } catch {}
