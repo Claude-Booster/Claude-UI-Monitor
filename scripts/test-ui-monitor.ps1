@@ -85,11 +85,12 @@ $s1Cases = @(
     @{ File = "C:/p/src/middleware/auth.ts";        Label = "Middleware .ts" }
 )
 $s1Jobs = $s1Cases | ForEach-Object {
-    $c = $_
+    $cFile  = $_.File
+    $cLabel = $_.Label
     Start-ThreadJob -ScriptBlock {
-        $json = @{ tool_name = "Edit"; tool_input = @{ file_path = $using:c.File } } | ConvertTo-Json -Compress
+        $json = @{ tool_name = "Edit"; tool_input = @{ file_path = $using:cFile } } | ConvertTo-Json -Compress
         $out  = $json | pwsh -NonInteractive -File $using:hook 2>$null
-        @{ Label = $using:c.Label; ExitCode = $LASTEXITCODE; Output = $out }
+        @{ Label = $using:cLabel; ExitCode = $LASTEXITCODE; Output = $out }
     }
 }
 foreach ($r in ($s1Jobs | Wait-Job | Receive-Job)) {
@@ -181,12 +182,14 @@ Write-Host "`n── 6. MCP server process health ──────────
 # tools right now. Tools only appear in a NEW CHAT started after registration.
 
 $mcpTmp = [IO.Path]::GetTempFileName()
+$mcpErr = [IO.Path]::GetTempFileName()
 $mcpProc = Start-Process -FilePath "claude" -ArgumentList "mcp", "list" `
-    -NoNewWindow -RedirectStandardOutput $mcpTmp -RedirectStandardError $null -PassThru
+    -NoNewWindow -RedirectStandardOutput $mcpTmp -RedirectStandardError $mcpErr -PassThru
 $null = $mcpProc.WaitForExit(6000)   # 6 s cap — each server would otherwise wait 30 s
 if (-not $mcpProc.HasExited) { try { $mcpProc.Kill() } catch {} }
 $mcpOut = (Get-Content $mcpTmp -Raw -ErrorAction SilentlyContinue) ?? ""
 Remove-Item $mcpTmp -ErrorAction SilentlyContinue
+Remove-Item $mcpErr -ErrorAction SilentlyContinue
 $pwLine  = ($mcpOut -split "`n" | Where-Object { $_ -match "playwright" }        | Select-Object -First 1)
 $cdpLine = ($mcpOut -split "`n" | Where-Object { $_ -match "chrome-devtools-mcp" } | Select-Object -First 1)
 Assert "playwright shows Connected"          ($mcpOut -match "playwright.*Connected")          "(got: $pwLine)"
@@ -802,7 +805,7 @@ if ((Test-Path $e2eScript) -and (Test-Path $nodeModPw)) {
 
         # One combined call: always-on fields + --dark-mode + --cwv (3 launches → 1)
         $t17rOut = "$env:USERPROFILE\.claude\ui-screenshots\test17-real.png"
-        $t17AllRaw = Invoke-NodeTimeout @($e2eScript, $t17Url, $t17rOut, '1280', '800', '--dark-mode', '--cwv') -TimeoutMs 300000
+        $t17AllRaw = Invoke-NodeTimeout @($e2eScript, $t17Url, $t17rOut, '1280', '800', '--dark-mode', '--cwv') -TimeoutMs 600000
         try { $t17rJson = $t17AllRaw | ConvertFrom-Json -ErrorAction Stop } catch { $t17rJson = $null }
 
         # Always-on fields
