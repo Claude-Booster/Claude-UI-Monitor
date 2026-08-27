@@ -33,6 +33,10 @@ function Invoke-NodeTimeout {
     $argStr = ($NodeArgs | ForEach-Object { '"' + ($_ -replace '"', '\"') + '"' }) -join ' '
     $proc = Start-Process -FilePath node -ArgumentList $argStr `
                           -NoNewWindow -RedirectStandardOutput $tmp -RedirectStandardError $err -PassThru
+    if (-not $proc) {
+        Remove-Item $tmp, $err -ErrorAction SilentlyContinue
+        return '{}'
+    }
     if (-not $proc.WaitForExit($TimeoutMs)) {
         try { $proc.Kill() } catch {}
         Remove-Item $tmp, $err -ErrorAction SilentlyContinue
@@ -183,10 +187,13 @@ Write-Host "`n── 6. MCP server process health ──────────
 
 $mcpTmp = [IO.Path]::GetTempFileName()
 $mcpErr = [IO.Path]::GetTempFileName()
-$mcpProc = Start-Process -FilePath "claude" -ArgumentList "mcp", "list" `
+# claude is a .cmd wrapper — must invoke via cmd.exe, not directly (Start-Process requires a Win32 exe)
+$mcpProc = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "claude mcp list" `
     -NoNewWindow -RedirectStandardOutput $mcpTmp -RedirectStandardError $mcpErr -PassThru
-$null = $mcpProc.WaitForExit(6000)   # 6 s cap — each server would otherwise wait 30 s
-if (-not $mcpProc.HasExited) { try { $mcpProc.Kill() } catch {} }
+if ($mcpProc) {
+    $null = $mcpProc.WaitForExit(6000)   # 6 s cap — each server would otherwise wait 30 s
+    if (-not $mcpProc.HasExited) { try { $mcpProc.Kill() } catch {} }
+}
 $mcpOut = (Get-Content $mcpTmp -Raw -ErrorAction SilentlyContinue) ?? ""
 Remove-Item $mcpTmp -ErrorAction SilentlyContinue
 Remove-Item $mcpErr -ErrorAction SilentlyContinue
