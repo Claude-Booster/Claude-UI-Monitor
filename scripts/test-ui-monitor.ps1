@@ -272,8 +272,10 @@ if ((Test-Path $e2eScript) -and (Test-Path $nodeModPw)) {
         }
     }
     # Multi-page mode: --routes flag returns a JSON array
+    Stop-Process -Name "chrome-headless-shell" -Force -ErrorAction SilentlyContinue
+    Start-Sleep 3   # give AV time to release locks on node.exe / chrome binary from previous run
     $multiOut    = "$env:USERPROFILE\.claude\ui-screenshots\e2e-multi-test"
-    $multiResult = Invoke-NodeTimeout @($e2eScript, 'about:blank', $multiOut, '1280', '800', '--routes=/') -TimeoutMs 300000
+    $multiResult = Invoke-NodeTimeout @($e2eScript, 'about:blank', $multiOut, '1280', '800', '--routes=/') -TimeoutMs 600000
     # -NoEnumerate preserves the JSON array as a PowerShell array (without it, a
     # single-element JSON array is unwrapped to a plain PSCustomObject by ConvertFrom-Json)
     try   { $mp2 = $multiResult | ConvertFrom-Json -ErrorAction Stop -NoEnumerate } catch { $mp2 = $null }
