@@ -83,3 +83,13 @@ jobs:
             exit 1
           fi
           echo "No restricted identifiers found."
+
+      # Secret scanning: TruffleHog with --only-verified confirms whether a
+      # detected secret is still LIVE, separating real emergencies from noise.
+      # (gitleaks-action is intentionally absent — it requires a paid org license
+      # on GitHub orgs, which would break CI on every org repo.)
+      - name: TruffleHog verified-secret scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          extra_args: --only-verified

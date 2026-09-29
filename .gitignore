@@ -1,4 +1,3 @@
-.githooks/blocked-patterns
 scripts/node_modules/
 scripts/test-results/
 scripts/playwright-report/
@@ -11,3 +10,6 @@ design-tokens.json
 project-registry.json
 ui-screenshots/
 scripts/scripts/
+
+# Restricted-identifier patterns (local only — never commit)
+.githooks/.blocked
